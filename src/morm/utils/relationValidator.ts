@@ -77,6 +77,16 @@ export function validateAndSortModels(models: any[]) {
   const errors: string[] = [];
   const infos: string[] = [];
 
+  // ----------------------------------
+  // INIT RELATION STORAGE PER MODEL
+  // ----------------------------------
+  for (const m of models) {
+    m._relations = {
+      incoming: [],
+      outgoing: [],
+    };
+  }
+
   // tableLower → model
   const modelByLower = new Map<string, any>();
   for (const m of models) {
@@ -142,6 +152,25 @@ export function validateAndSortModels(models: any[]) {
         );
         continue;
       }
+
+      // ---------------------------
+      // RECORD REVERSE RELATIONS (METADATA ONLY)
+      // ---------------------------
+      model._relations.outgoing.push({
+        fromTable: table,
+        fromColumn: col.name,
+        toTable: refTable,
+        toColumn: refCol,
+        relation,
+      });
+
+      targetModel._relations.incoming.push({
+        fromTable: table,
+        fromColumn: col.name,
+        toTable: refTable,
+        toColumn: refCol,
+        relation,
+      });
 
       // ---------------------------
       // DEFAULT FK ACTIONS

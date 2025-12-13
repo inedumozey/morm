@@ -49,7 +49,7 @@ export const Profile = morm?.model({
   ],
 });
 
-export const User = morm?.model({
+const User = morm?.model({
   table: "users",
   enums: [{ name: "USER_ROLES", values: ["ADMIN", "STUDENT"] }],
   columns: [
@@ -58,10 +58,11 @@ export const User = morm?.model({
     {
       name: "referrer_id",
       type: "uuid",
+      notNull: false,
       references: {
         table: "users",
         column: "id",
-        relation: "nn",
+        relation: "nm", // or ONE-TO-MANY
         onDelete: "CASCADE",
         onUpdate: "CASCADE",
       },

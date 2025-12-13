@@ -412,6 +412,13 @@ export class Morm {
     // END--- RELATION VALIDATION & AUTOSORT
     // ======================================================
 
+    // TESTING REVERSE RELATION
+    for (const m of this.models) {
+      console.log(colors.cyan + `RELATIONS for ${m.table}:` + colors.reset);
+      console.log("  outgoing:", m._relations?.outgoing);
+      console.log("  incoming:", m._relations?.incoming);
+    }
+
     const client = await this.pool.connect();
 
     try {
