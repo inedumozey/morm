@@ -94,7 +94,4 @@ const User = morm?.model({
 // await morm?.migrate({ clean: true });
 await morm?.migrate({ clean: true, reset: true });
 
-// console.log(User._relations.incoming.length); // 1
-// console.log(Profile._relations.outgoing.length); // 1
-
 app.listen(4000, () => console.log("Server running on port 4000"));
