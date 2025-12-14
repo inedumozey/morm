@@ -44,6 +44,7 @@ const db = async (db_name: string) => {
 };
 
 const morm = await db("drhmo");
+
 const Profile = morm?.model({
   table: "profile",
   enums: [
@@ -75,19 +76,31 @@ const User = morm?.model({
   enums: [{ name: "USER_ROLES", values: ["ADMIN", "STUDENT"] }],
   columns: [
     { name: "id", type: "uuid", primary: true, default: "uuid()" },
-    { name: "int", type: "int", default: "10" },
     {
       name: "referrer_id",
       type: "uuid",
-      notNull: false,
       references: {
         table: "users",
         column: "id",
-        relation: "nm", // or ONE-TO-MANY
-        onDelete: "CASCADE",
-        onUpdate: "CASCADE",
+        relation: "nm", // ONE-TO-MANY
       },
     },
+    {
+      name: "position_id",
+      type: "UUID[]",
+      references: {
+        table: "position",
+        column: "id",
+        relation: "mm",
+      },
+    },
+  ],
+});
+const Position = morm?.model({
+  table: "position",
+  columns: [
+    { name: "id", type: "uuid", primary: true, default: "uuid()" },
+    { name: "title", type: "text", notNull: true },
   ],
 });
 

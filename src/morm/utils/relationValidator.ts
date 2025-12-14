@@ -87,6 +87,15 @@ export function validateAndSortModels(models: any[]) {
     };
   }
 
+  // MANY-TO-MANY JUNCTION TABLES
+  const junctionTables: {
+    name: string;
+    left: { table: string; column: string };
+    right: { table: string; column: string };
+    onDelete: string;
+    onUpdate: string;
+  }[] = [];
+
   // tableLower → model
   const modelByLower = new Map<string, any>();
   for (const m of models) {
@@ -202,13 +211,25 @@ export function validateAndSortModels(models: any[]) {
       const left = parseType(col.type);
       const right = parseType(targetCol.type);
 
-      if (relation === "MANY-TO-MANY" && !left.isArray) {
-        errors.push(
-          `${colors.red}${colors.bold}MORM ERROR: MANY-TO-MANY cannot reference non-array column "${table}.${col.name}".${colors.reset}`
-        );
+      // ---------------------------
+      // MANY-TO-MANY (VIRTUAL COLUMN)
+      // ---------------------------
+      if (relation === "MANY-TO-MANY") {
+        if (!left.isArray) {
+          errors.push(
+            `${colors.red}${colors.bold}MORM ERROR: MANY-TO-MANY relation on "${table}.${col.name}" requires array type (UUID[]).${colors.reset}`
+          );
+        }
+
+        // CRITICAL: mark as virtual → NO COLUMN, NO FK
+        col.__virtual = true;
+        // MM relations NEVER create FK or dependency edges
         continue;
       }
 
+      // ---------------------------
+      // ONE-TO-ONE / ONE-TO-MANY
+      // ---------------------------
       if (left.base !== right.base) {
         errors.push(
           `${colors.red}${colors.bold}MORM ERROR: type mismatch on relation "${table}.${col.name}" → "${refTable}.${refCol}": ${left.base} ≠ ${right.base}.${colors.reset}`
@@ -267,6 +288,5 @@ export function validateAndSortModels(models: any[]) {
       models.find((m) => String(m.table).toLowerCase() === tblLower)
     )
     .filter(Boolean);
-
   return { errors, infos, sorted };
 }

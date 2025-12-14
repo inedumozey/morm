@@ -7,6 +7,7 @@ import { diffTable } from "./migrations/diffTable.js";
 import type { ColumnDefinition } from "./model-types.js";
 import { colors } from "./utils/logColors.js";
 import { parseCheck } from "./utils/checkParser.js";
+import { normalizeRelation } from "./utils/relationValidator.js";
 
 /* canonical type used for validation (kept small and consistent with diffTable) */
 function canonicalType(t: string | null | undefined): string {
@@ -119,11 +120,10 @@ export function createModelRuntime(
     __isArray?: boolean;
     __arrayInner?: string | null;
     __enumKey?: string | null;
+    __virtual?: boolean;
   };
 
-  const processed = (config.columns ?? []).map((c) => ({
-    ...c,
-  })) as RuntimeColumn[];
+  const processed = config.columns as RuntimeColumn[];
 
   /** AUTO-ADD TIMESTAMPS (TIMESTAMPTZ + now()) if missing */
   if (!processed.some((c) => c.name === "created_at")) {
@@ -173,6 +173,18 @@ export function createModelRuntime(
   for (const c of processed) {
     c.name = String(c.name);
     c.__primary = !!c.primary;
+
+    // RELATION VALIDATION (MODEL LEVEL)
+    if (c.references && c.references.relation) {
+      const rel = normalizeRelation(c.references.relation);
+      // MANY-TO-MANY
+      if (rel === "MANY-TO-MANY") {
+        c.__virtual = true;
+
+        // MM columns NEVER produce SQL
+        continue;
+      }
+    }
 
     const { upper, isArray, base } = parseTypeInfo(String(c.type));
 
@@ -229,31 +241,6 @@ export function createModelRuntime(
         );
       }
     }
-
-    /** RELATION VALIDATION */
-    if (c.references && c.references.relation) {
-      const rel = String(c.references.relation).toUpperCase();
-
-      if (rel === "MANY-TO-MANY") {
-        // MUST be array type
-        if (!c.__isArray) {
-          validationMessages.push(
-            `${colors.red}${colors.bold}MORM ERROR: MANY-TO-MANY relation on column "${c.name}" requires an array type (e.g. UUID[]). Found: ${c.type}.${colors.reset}`
-          );
-          continue;
-        }
-      }
-
-      if (rel === "ONE-TO-ONE" || rel === "ONE-TO-MANY") {
-        // MUST NOT be array type
-        if (c.__isArray) {
-          validationMessages.push(
-            `${colors.red}${colors.bold}MORM ERROR: ${rel} relation on column "${c.name}" cannot use an array type. Found: ${c.type}.${colors.reset}`
-          );
-          continue;
-        }
-      }
-    }
   }
 
   /** VALIDATION FAILED → DO NOT MIGRATE THIS MODEL */
@@ -285,7 +272,11 @@ export function createModelRuntime(
   }
 
   /** NORMAL TABLE CREATION SQL (used when table doesn't exist) */
-  const columnsSQL = processed.map((c) => buildColumnSQL(c)).join(", ");
+  const columnsSQL = processed
+    .map((c) => buildColumnSQL(c))
+    .filter((sql) => sql && sql.trim().length > 0)
+    .join(", ");
+
   const createTableSQL = `
     CREATE TABLE IF NOT EXISTS "${config.table}" (
       ${columnsSQL}
@@ -437,7 +428,6 @@ export function createModelRuntime(
         try {
           await client.query("ROLLBACK");
         } catch {}
-
         return false;
       }
     },

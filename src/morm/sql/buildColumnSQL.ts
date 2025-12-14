@@ -94,12 +94,16 @@ export function buildColumnSQL(
     __primary?: boolean;
     __identity?: boolean;
     __isEnumType?: boolean;
+    __virtual?: boolean;
   }
 ): string {
   const parts: string[] = [];
-
   // column name
   parts.push(`"${col.name}"`);
+
+  if (col.__virtual) {
+    return "";
+  }
 
   const typRaw = String(col.type);
   const typNormalized = normalizeType(typRaw);
@@ -272,6 +276,5 @@ export function buildColumnSQL(
         `ON DELETE ${onDelete} ON UPDATE ${onUpdate}`
     );
   }
-
   return parts.join(" ");
 }

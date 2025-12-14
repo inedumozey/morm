@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import { createModelRuntime } from "./model.js";
 import { colors } from "./utils/logColors.js";
 import { validateAndSortModels } from "./utils/relationValidator.js";
+import { buildJunctionTables } from "./utils/junctionBuilder.js";
 
 export interface TransformOptions {
   trim?: number;
@@ -427,7 +428,6 @@ export class Morm {
 
       for (const model of this.models) {
         const ok = await model.migrate(client, options);
-
         if (!ok) {
           console.error(
             colors.red +
@@ -440,11 +440,38 @@ export class Morm {
           return false;
         }
       }
+      // ======================================================
+      // MANY-TO-MANY — CREATE JUNCTION TABLES (SAME TRANSACTION)
+      // ======================================================
+      const junctionPlans = buildJunctionTables(this.models);
+
+      for (const j of junctionPlans) {
+        try {
+          await client.query(j.createSQL);
+
+          for (const idx of j.indexSQL ?? []) {
+            await client.query(idx);
+          }
+
+          console.log(
+            `${colors.green}Created junction table "${j.table}"${colors.reset}`
+          );
+        } catch (err) {
+          console.error(
+            `${colors.red}${colors.bold}MORM JUNCTION ERROR — "${j.table}"${colors.reset}`
+          );
+        }
+      }
+      // ======================================================
+      // ENDS -- MANY-TO-MANY — CREATE JUNCTION TABLES (ATOMIC)
+      // ======================================================
 
       await client.query("COMMIT");
     } catch (err) {
       await client.query("ROLLBACK");
-      console.error("MORM global migrate error:", err);
+      console.error(
+        `${colors.red}${colors.bold}MORM GLOBAL MIGRATION ERROR — "${err}"${colors.reset}`
+      );
     } finally {
       client.release();
     }
