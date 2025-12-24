@@ -1,3 +1,5 @@
+// utils/relationValidator.ts
+
 import { colors } from "./logColors.js";
 
 export type NormalizedRel =
@@ -12,42 +14,45 @@ export function normalizeRelation(input: string | undefined): NormalizedRel {
   const v = input.trim().toLowerCase();
 
   const oneToOne = new Set([
-    "one",
-    "1",
-    "one-to-one",
+    "nn",
+    "n-n",
+    "ntn",
+    "n-t-n",
+    "n-to-n",
+    "one-one",
+    "one-t-one",
     "one_to_one",
     "1-1",
     "1:1",
-    "o2o",
-    "n-n",
-    "nn",
-    "n-to-n",
-    "n_t_n",
-    "ntn",
+    "n:n",
   ]);
   if (oneToOne.has(v)) return "ONE-TO-ONE";
 
   const oneToMany = new Set([
+    "nm",
+    "n-m",
+    "ntm",
+    "n-t-m",
+    "n-to-m",
+    "one-many",
+    "one-t-many",
     "one-to-many",
-    "one_to_many",
     "1-m",
     "1:m",
-    "one-to-m",
-    "n-to-m",
-    "n_t_m",
-    "ntm",
-    "n-m",
-    "nm",
+    "n:m",
   ]);
   if (oneToMany.has(v)) return "ONE-TO-MANY";
 
   const manyToMany = new Set([
-    "many-to-many",
-    "m-to-m",
-    "m_t_m",
-    "mtm",
     "mm",
     "m-m",
+    "mtm",
+    "m-t-m",
+    "m-to-m",
+    "many-many",
+    "many-t-many",
+    "many-to-many",
+    "m:m",
   ]);
   if (manyToMany.has(v)) return "MANY-TO-MANY";
 
@@ -77,32 +82,15 @@ export function validateAndSortModels(models: any[]) {
   const errors: string[] = [];
   const infos: string[] = [];
 
-  // ----------------------------------
-  // INIT RELATION STORAGE PER MODEL
-  // ----------------------------------
   for (const m of models) {
-    m._relations = {
-      incoming: [],
-      outgoing: [],
-    };
+    m._relations = { incoming: [], outgoing: [] };
   }
 
-  // MANY-TO-MANY JUNCTION TABLES
-  const junctionTables: {
-    name: string;
-    left: { table: string; column: string };
-    right: { table: string; column: string };
-    onDelete: string;
-    onUpdate: string;
-  }[] = [];
-
-  // tableLower → model
   const modelByLower = new Map<string, any>();
   for (const m of models) {
     modelByLower.set(String(m.table).toLowerCase(), m);
   }
 
-  // dependency graph: referenced → referencing
   const graph = new Map<string, Set<string>>();
   const nodes = new Set<string>();
 
@@ -112,9 +100,7 @@ export function validateAndSortModels(models: any[]) {
     if (!graph.has(t)) graph.set(t, new Set());
   }
 
-  // ---------------------------
-  // VALIDATE REFERENCES
-  // ---------------------------
+  /* ---------- VALIDATE REFERENCES ---------- */
   for (const model of models) {
     const table = String(model.table);
     const tableLower = table.toLowerCase();
@@ -125,20 +111,21 @@ export function validateAndSortModels(models: any[]) {
       const ref = col.references;
 
       if (!ref.table || !ref.column) {
+        errors.push(`${colors.subject}${table}${colors.reset}`);
         errors.push(
-          `${colors.red}${colors.bold}MORM ERROR: invalid references on "${table}.${col.name}": missing table or column.${colors.reset}`
+          `  ${colors.error}Invalid reference: ${colors.reset} ${colors.subject}${table}.${col.name} missing target${colors.reset}`
         );
         continue;
       }
 
       const refTable = String(ref.table);
       const refTableLower = refTable.toLowerCase();
-      const isSelfRef = refTableLower === tableLower;
 
       const targetModel = modelByLower.get(refTableLower);
       if (!targetModel) {
+        errors.push(` ${colors.subject}${table}${colors.reset}`);
         errors.push(
-          `${colors.red}${colors.bold}MORM ERROR: relation on "${table}.${col.name}" references missing table "${refTable}".${colors.reset}`
+          `  ${colors.error}Missing table: ${colors.subject}${refTable} does not exist${colors.reset}`
         );
         continue;
       }
@@ -148,42 +135,35 @@ export function validateAndSortModels(models: any[]) {
         (c: any) => String(c.name) === refCol
       );
       if (!targetCol) {
+        errors.push(` ${colors.subject}${table}${colors.reset}`);
         errors.push(
-          `${colors.red}${colors.bold}MORM ERROR: relation on "${table}.${col.name}" references missing column "${refTable}.${refCol}".${colors.reset}`
+          `  ${colors.error}Missing column:${colors.reset} ${colors.subject}${refTable}.${refCol}${colors.reset}`
         );
         continue;
       }
 
       const relation = normalizeRelation(ref.relation);
+
       if (!relation) {
+        errors.push(` ${colors.subject}${table}${colors.reset}`);
         errors.push(
-          `${colors.red}${colors.bold}MORM ERROR: invalid relation "${ref.relation}" on "${table}.${col.name}".${colors.reset}`
+          `  ${colors.error}Invalid relation:${colors.reset} ${colors.subject}${table}.${col.name}${colors.reset}`
         );
         continue;
       }
 
-      // ---------------------------
-      // RECORD REVERSE RELATIONS (METADATA ONLY)
-      // ---------------------------
-      model._relations.outgoing.push({
-        fromTable: table,
-        fromColumn: col.name,
-        toTable: refTable,
-        toColumn: refCol,
-        relation,
-      });
+      // ONE-TO-ONE MUST ALWAYS BE UNIQUE
+      if (relation == "ONE-TO-ONE") {
+        // log error if the column contains unique:true
+        if (String(col.unique) == "false") {
+          errors.push(` ${colors.subject}${table}${colors.reset}`);
+          errors.push(
+            `  ${colors.error}Invalid constraint:${colors.reset} ${colors.subject}${table}.${col.name} has a ONE-TO-ONE relation and must always be unique ${colors.reset}`
+          );
+          continue;
+        }
+      }
 
-      targetModel._relations.incoming.push({
-        fromTable: table,
-        fromColumn: col.name,
-        toTable: refTable,
-        toColumn: refCol,
-        relation,
-      });
-
-      // ---------------------------
-      // DEFAULT FK ACTIONS
-      // ---------------------------
       const onDelete = ref.onDelete
         ? String(ref.onDelete).toUpperCase()
         : "CASCADE";
@@ -192,68 +172,98 @@ export function validateAndSortModels(models: any[]) {
         : "CASCADE";
 
       if (!VALID_FK_ACTIONS.has(onDelete)) {
+        errors.push(` ${colors.subject}${table}${colors.reset}`);
         errors.push(
-          `${colors.red}${colors.bold}MORM ERROR: invalid onDelete action "${ref.onDelete}" on "${table}.${col.name}".${colors.reset}`
+          `  ${colors.error}Invalid onDelete:${colors.reset} ${colors.subject}${table}.${col.name}${colors.reset}`
         );
       }
       if (!VALID_FK_ACTIONS.has(onUpdate)) {
+        errors.push(` ${colors.subject}${table}${colors.reset}`);
         errors.push(
-          `${colors.red}${colors.bold}MORM ERROR: invalid onUpdate action "${ref.onUpdate}" on "${table}.${col.name}".${colors.reset}`
+          `  ${colors.error}Invalid onUpdate:${colors.reset} ${colors.subject}${table}.${col.name}${colors.reset}`
         );
       }
 
       ref.onDelete = onDelete;
       ref.onUpdate = onUpdate;
 
-      // ---------------------------
-      // TYPE CHECK
-      // ---------------------------
       const left = parseType(col.type);
       const right = parseType(targetCol.type);
 
-      // ---------------------------
-      // MANY-TO-MANY (VIRTUAL COLUMN)
-      // ---------------------------
-      if (relation === "MANY-TO-MANY") {
-        if (!left.isArray) {
+      // ONE-TO-ONE AND ONE-TO-MANY DOES NOT REQUIRE ARRAY TYPE
+      if (relation == "ONE-TO-MANY" || relation == "ONE-TO-ONE") {
+        if (left.isArray) {
+          errors.push(` ${colors.subject}${table}${colors.reset}`);
           errors.push(
-            `${colors.red}${colors.bold}MORM ERROR: MANY-TO-MANY relation on "${table}.${col.name}" requires array type (UUID[]).${colors.reset}`
+            `  ${colors.error}Invalid ${relation}:${colors.reset} ${colors.subject}${table}.${col.name} does not require array type${colors.reset}`
           );
+          continue;
         }
-
-        // CRITICAL: mark as virtual → NO COLUMN, NO FK
-        col.__virtual = true;
-        // MM relations NEVER create FK or dependency edges
-        continue;
       }
 
-      // ---------------------------
-      // ONE-TO-ONE / ONE-TO-MANY
-      // ---------------------------
       if (left.base !== right.base) {
+        errors.push(` ${colors.subject}${table}${colors.reset}`);
         errors.push(
-          `${colors.red}${colors.bold}MORM ERROR: type mismatch on relation "${table}.${col.name}" → "${refTable}.${refCol}": ${left.base} ≠ ${right.base}.${colors.reset}`
+          `  ${colors.error}Type mismatch:${colors.reset} ${colors.subject}${table}.${col.name}:${left.base} → ${colors.subject}${refTable}.${refCol}:${right.base}${colors.reset}`
         );
         continue;
       }
 
-      // ---------------------------
-      // DEPENDENCY GRAPH
-      // ---------------------------
-      // Skip self-reference edges to avoid false cycles
-      if (!isSelfRef) {
+      // MANY-TO-MANY RELATION TYPE MUST BE ARRAY, THE REST MUST NOT BE ARRAY
+      if (relation === "MANY-TO-MANY") {
+        if (!left.isArray) {
+          errors.push(` ${colors.subject}${table}${colors.reset}`);
+          errors.push(
+            `  ${colors.error}Invalid MANY-TO-MANY:${colors.reset} ${colors.subject}${table}.${col.name} requires array type${colors.reset}`
+          );
+          continue;
+        }
+
+        // duplicated column name protection (your current bug)
+        const sameName = model.columns.filter(
+          (c: any) =>
+            String(c.name).toLowerCase() === String(col.name).toLowerCase()
+        );
+
+        if (sameName.length > 1) {
+          errors.push(
+            `${colors.error}Duplicate column:${colors.reset} ${colors.subject}${table}.${col.name}${colors.reset} cannot be declared multiple times`
+          );
+          continue;
+        }
+
+        col.__virtual = true;
+      }
+
+      if (refTableLower !== tableLower) {
         graph.get(refTableLower)!.add(tableLower);
         nodes.add(refTableLower);
-        nodes.add(tableLower);
       }
+
+      // RECORD RELATION METADATA
+      // record outgoing
+      model._relations.outgoing.push({
+        relation,
+        fromTable: table,
+        toTable: refTable,
+        column: col.name,
+        isSelf: tableLower === refTableLower,
+      });
+
+      // record incoming
+      targetModel._relations.incoming.push({
+        relation,
+        fromTable: table,
+        toTable: refTable,
+        column: col.name,
+        isSelf: tableLower === refTableLower,
+      });
     }
   }
 
   if (errors.length > 0) return { errors, infos, sorted: null };
 
-  // ---------------------------
-  // TOPOLOGICAL SORT (KAHN)
-  // ---------------------------
+  /* ---------- TOPO SORT ---------- */
   const inDegree = new Map<string, number>();
   for (const n of nodes) inDegree.set(n, 0);
 
@@ -264,29 +274,28 @@ export function validateAndSortModels(models: any[]) {
   }
 
   const q: string[] = [];
-  for (const [n, deg] of inDegree.entries()) if (deg === 0) q.push(n);
+  for (const [n, d] of inDegree.entries()) if (d === 0) q.push(n);
 
   const order: string[] = [];
-  while (q.length > 0) {
+  while (q.length) {
     const n = q.shift()!;
     order.push(n);
-    for (const next of graph.get(n) ?? []) {
-      inDegree.set(next, inDegree.get(next)! - 1);
-      if (inDegree.get(next) === 0) q.push(next);
+    for (const v of graph.get(n) ?? []) {
+      inDegree.set(v, inDegree.get(v)! - 1);
+      if (inDegree.get(v) === 0) q.push(v);
     }
   }
 
   if (order.length !== nodes.size) {
     errors.push(
-      `${colors.red}${colors.bold}MORM ERROR: cyclic relations detected — cannot determine migration order.${colors.reset}`
+      `  ${colors.error}Cyclic relations: ${colors.reset} ${colors.subject}cannot resolve migration order${colors.reset}`
     );
     return { errors, infos, sorted: null };
   }
 
   const sorted = order
-    .map((tblLower) =>
-      models.find((m) => String(m.table).toLowerCase() === tblLower)
-    )
+    .map((t) => models.find((m) => String(m.table).toLowerCase() === t))
     .filter(Boolean);
+
   return { errors, infos, sorted };
 }

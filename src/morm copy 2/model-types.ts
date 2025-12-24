@@ -43,13 +43,13 @@ export interface ColumnReference {
 }
 
 export interface ColumnDefinition {
-  name: string | (() => string); // done
-  type: string | (() => string); // done
-  primary?: boolean | (() => boolean);
-  unique?: boolean | (() => boolean); // done
-  notNull?: boolean | (() => boolean); // done
-  default?: any | (() => any);
-  check?: string | (() => string); // done
+  name: string;
+  type: string;
+  primary?: boolean;
+  unique?: boolean;
+  notNull?: boolean;
+  default?: any;
+  check?: string;
   references?: ColumnReference | null;
-  sanitize?: boolean | "strict" | (() => boolean | "strict"); // done
+  sanitize?: boolean | "strict";
 }

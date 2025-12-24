@@ -1,0 +1,47 @@
+things working now on diffTable:
+can change column name
+can chnage type,
+can add new column to already existing tabel
+can drop column to already existing tabel
+reference columns can be created and type and name can be changed just like any other column
+array column name and type is changing
+everything about indexes are working
+notNull not chnaging working now
+default value change working noew
+
+
+things not working
+column name change cause error : MORM MIGRATION ERROR applying alterations: 
+syntax error at or near ","
+MORM MODEL ERROR in model "position"
+current transaction is aborted, commands ignored until end of transaction block
+default changes message does not log out after making 
+check not changing
+unique not chnaging
+pk type chaning not working: default for column "id" cannot be cast automatically to type integer
+junction table can be created however reloading the server will drop and create the junction table at the same time
+
+
+2. Column mutation of processed is risky
+
+You mutate processed in multiple places:
+
+auto-adding timestamps
+
+rename marking (__renamed)
+
+enum flags
+
+identity flags
+
+Because processed references config.columns, this can cause:
+
+duplicated timestamps if migrate runs twice
+
+subtle state bleed across migrations
+
+🔧 Fix
+
+Clone once:
+
+const processed = config.columns.map(c => ({ ...c }));

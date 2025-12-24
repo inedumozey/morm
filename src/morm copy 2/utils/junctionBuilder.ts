@@ -29,27 +29,21 @@ export function buildJunctionTables(models: any[]): JunctionPlan[] {
 
     for (const rel of model._relations?.outgoing ?? []) {
       if (rel.relation !== "MANY-TO-MANY") continue;
+
       const tableB = rel.toTable;
-      const isSelf = rel.isSelf;
       if (!tableB) continue;
 
-      // deterministic naming order
+      // deterministic ordering
       const [t1Raw, t2Raw] = sortedPair(tableA, tableB);
+      const t1 = snake(t1Raw);
+      const t2 = snake(t2Raw);
 
-      const junction = isSelf
-        ? `${snake(t1Raw)}_${snake(t2Raw)}_junction`
-        : `${snake(t1Raw)}_${snake(t2Raw)}_junction`;
-
+      const junction = `${t1}_${t2}_junction`;
       if (seen.has(junction)) continue;
       seen.add(junction);
 
-      const colA = isSelf
-        ? `${snake(rel.column)}_source_id`
-        : `${snake(t1Raw)}_id`;
-
-      const colB = isSelf
-        ? `${snake(rel.column)}_target_id`
-        : `${snake(t2Raw)}_id`;
+      const colA = `${t1}_id`;
+      const colB = `${t2}_id`;
 
       const modelA = models.find((m) => m.table === t1Raw);
       const modelB = models.find((m) => m.table === t2Raw);

@@ -1,14 +1,13 @@
+// morm.ts
+
 import { Pool } from "pg";
 
 import { createModelRuntime } from "./model.js";
 import { colors } from "./utils/logColors.js";
-
-export interface TransformOptions {
-  trim?: number;
-  sanitize?: number;
-  toLowerCase?: number;
-  toUpperCase?: number;
-}
+import { validateAndSortModels } from "./utils/relationValidator.js";
+import { buildJunctionTables } from "./utils/junctionBuilder.js";
+import type { ColumnDefinition } from "./model-types.js";
+import { EnumRegistry, migrateEnumsGlobal } from "./migrations/enumRegistry.js";
 
 export interface TransactionOptions {
   maxWait?: number;
@@ -16,9 +15,8 @@ export interface TransactionOptions {
 }
 
 export interface MormOptions {
-  allowSLL?: boolean;
+  allowSSL?: boolean;
   transaction?: TransactionOptions;
-  transform?: TransformOptions;
 }
 
 export class Morm {
@@ -27,6 +25,7 @@ export class Morm {
   private options?: MormOptions | undefined;
   private models: any[] = [];
   private _migrating: boolean = false;
+  private enumRegistry = new EnumRegistry();
 
   /** --------------------------------------------------
    * Instance cache: ensures one Morm per URL
@@ -63,7 +62,7 @@ export class Morm {
       host === "localhost" || host === "127.0.0.1" || host === "::1";
 
     const ssl =
-      options?.allowSLL ?? (!isLocal && { rejectUnauthorized: false });
+      options?.allowSSL ?? (!isLocal && { rejectUnauthorized: false });
 
     // -------- STEP 1 — Ensure DB exists ---------
     const adminURL = new URL(connectionString);
@@ -144,10 +143,15 @@ export class Morm {
     await this.pool.end();
   }
 
+  enums(defs: { name: string; values: string[] }[]) {
+    this.enumRegistry.register(defs);
+  }
+
   model(config: {
     table: string;
-    columns: any[];
-    indexes?: any[];
+    columns: ColumnDefinition[];
+    indexes?: readonly string[];
+    sanitize?: boolean | "strict";
     enums?: any[]; // enums validated at runtime only
   }) {
     const mdl = createModelRuntime(this, config as any);
@@ -155,12 +159,67 @@ export class Morm {
     return mdl;
   }
 
-  async migrate(options?: { clean?: boolean; reset?: boolean }) {
+  async migrate(option?: { clean?: boolean; reset?: boolean }) {
     if (this._migrating) return false;
     this._migrating = true;
 
+    const options = {
+      clean: true,
+      reset: false,
+      ...option,
+    };
+
+    // ================================
+    // ENUM VALIDATION (models → registry)
+    // ================================
+    for (const model of this.models) {
+      for (const col of model.columns ?? []) {
+        const type = String(col.type);
+        if (
+          /^(INT|INTEGER|SMALLINT|BIGINT|TEXT|UUID|BOOLEAN|JSON|JSONB|TIMESTAMP|TIMESTAMPTZ|DATE|TIME|TIMEZ|NUMERIC|DECIMAL)(\[\])?$/i.test(
+            type
+          )
+        ) {
+          continue;
+        }
+
+        if (!this.enumRegistry.get(type)) {
+          throw new Error(
+            `MORM MODEL ERROR: ${model.table}.${col.name} uses enum "${type}" but it was not registered`
+          );
+        }
+      }
+    }
+
+    // ================================
+    // ENUM MIGRATION (GLOBAL)
+    // ================================
+    await migrateEnumsGlobal(this.pool, this.enumRegistry.all());
+
     // ======================================================
-    // AUTOMATIC TABLE RENAME DETECTION
+    // STARTS --- HARD VALIDATION — NO DATABASE CHANGES IF ANY MODEL FAILS
+    // ======================================================
+    for (const model of this.models) {
+      if (model.sql.create === "") {
+        console.log(
+          colors.red +
+            colors.bold +
+            `MORM MIGRATION ABORTED — model "${model.table}" validation failed.` +
+            colors.reset
+        );
+
+        // reset migrate state
+        this._migrating = false;
+
+        return false;
+      }
+    }
+    // ======================================================
+    // ENDS --- HARD VALIDATION — NO DATABASE CHANGES IF ANY MODEL FAILS
+    // ======================================================
+
+    // ======================================================
+    // START --- AUTOMATIC TABLE RENAME DETECTION
     // ======================================================
     const dbTables = (
       await this.pool.query(`
@@ -194,10 +253,9 @@ export class Morm {
         console.error(err);
       }
     }
-    // ======================================================
 
     // ======================================================
-    // DROP TABLES NOT IN MODELS
+    // START --- DROP TABLES NOT IN MODELS WHEN reset:true
     // ======================================================
     const remainingDbTables = (
       await this.pool.query(`
@@ -238,25 +296,147 @@ export class Morm {
         console.error(err);
       }
     }
+    if (options?.reset) {
+      console.log(
+        colors.red +
+          colors.bold +
+          "MORM RESET: DROPPING ALL TABLES, ENUMS, AND TRIGGERS" +
+          colors.reset
+      );
+
+      // 1. DROP ALL TRIGGERS
+      await this.pool.query(`
+    DO $$ DECLARE r RECORD;
+    BEGIN
+      FOR r IN (
+        SELECT trigger_name, event_object_table
+        FROM information_schema.triggers
+        WHERE trigger_schema = 'public'
+      ) LOOP
+        EXECUTE 'DROP TRIGGER IF EXISTS "' || r.trigger_name || '" ON "' || r.event_object_table || '" CASCADE';
+      END LOOP;
+    END $$;
+  `);
+
+      // 2. DROP ALL TABLES
+      await this.pool.query(`
+    DO $$ DECLARE r RECORD;
+    BEGIN
+      FOR r IN (
+        SELECT tablename FROM pg_tables
+        WHERE schemaname = 'public'
+      ) LOOP
+        EXECUTE 'DROP TABLE IF EXISTS "' || r.tablename || '" CASCADE';
+      END LOOP;
+    END $$;
+  `);
+
+      // 3. DROP ALL ENUM TYPES
+      await this.pool.query(`
+    DO $$ DECLARE r RECORD;
+    BEGIN
+      FOR r IN (
+        SELECT typname FROM pg_type
+        WHERE typtype = 'e'
+      ) LOOP
+        EXECUTE 'DROP TYPE IF EXISTS "' || r.typname || '" CASCADE';
+      END LOOP;
+    END $$;
+  `);
+
+      console.log(
+        colors.cyan +
+          "MORM RESET COMPLETE — database schema wiped" +
+          colors.reset
+      );
+      console.log(
+        colors.magenta + "Rebuilding tables from models…" + colors.reset
+      );
+    }
+
     // ======================================================
+    // START--- RELATION VALIDATION & AUTOSORT
+    // ======================================================
+    const relRes = validateAndSortModels(this.models);
+    if (relRes.infos && relRes.infos.length > 0) {
+      for (const info of relRes.infos) console.log(info);
+    }
+    if (relRes.errors && relRes.errors.length > 0) {
+      // Print errors and abort migration early (before any destructive reset)
+      console.log(
+        `${colors.bold}${colors.red}MORM MODEL ERROR — relation validation failed${colors.reset}`
+      );
+      for (const e of relRes.errors) console.error("  " + e);
+      this._migrating = false;
+      return false;
+    }
+    if (relRes.sorted) {
+      // reorder this.models to the dependency-safe order
+      this.models = relRes.sorted;
+    }
+    // ======================================================
+    // END--- RELATION VALIDATION & AUTOSORT
+    // ======================================================
+
+    // TESTING REVERSE RELATION
+    // for (const m of this.models) {
+    //   console.log(colors.cyan + `RELATIONS for ${m.table}:` + colors.reset);
+    //   console.log("  outgoing:", m._relations?.outgoing);
+    //   console.log("  incoming:", m._relations?.incoming);
+    // }
 
     const client = await this.pool.connect();
 
     try {
       await client.query("BEGIN");
+      await client.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
 
       for (const model of this.models) {
         const ok = await model.migrate(client, options);
         if (!ok) {
-          // don't throw — continue
-          continue;
+          console.error(
+            colors.red +
+              colors.bold +
+              `MORM MIGRATION ABORTED — model "${model.table}" failed. Rolling back.` +
+              colors.reset
+          );
+          await client.query("ROLLBACK");
+          this._migrating = false;
+          return false;
         }
       }
+      // ======================================================
+      // MANY-TO-MANY — CREATE JUNCTION TABLES (SAME TRANSACTION)
+      // ======================================================
+      const junctionPlans = buildJunctionTables(this.models);
+
+      for (const j of junctionPlans) {
+        try {
+          await client.query(j.createSQL);
+
+          for (const idx of j.indexSQL ?? []) {
+            await client.query(idx);
+          }
+
+          console.log(
+            `${colors.green}Created junction table "${j.table}"${colors.reset}`
+          );
+        } catch (err) {
+          console.error(
+            `${colors.red}${colors.bold}MORM JUNCTION ERROR — "${j.table}"${colors.reset}`
+          );
+        }
+      }
+      // ======================================================
+      // ENDS -- MANY-TO-MANY — CREATE JUNCTION TABLES (ATOMIC)
+      // ======================================================
 
       await client.query("COMMIT");
     } catch (err) {
       await client.query("ROLLBACK");
-      console.error("MORM global migrate error:", err);
+      console.error(
+        `${colors.red}${colors.bold}MORM GLOBAL MIGRATION ERROR — "${err}"${colors.reset}`
+      );
     } finally {
       client.release();
     }
@@ -265,6 +445,7 @@ export class Morm {
 
     // reset migrating flag so future migrations can run
     this._migrating = false;
+
     return true;
   }
 }

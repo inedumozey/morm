@@ -1,23 +1,27 @@
+// sql/buildColumnSQL.ts
+
 import type { ColumnDefinition } from "../model-types.js";
+import { canonicalType } from "../utils/canonicalType.js";
 import { parseCheck } from "../utils/checkParser.js";
 import { colors } from "../utils/logColors.js";
+import { normalizeRelation } from "../utils/relationValidator.js";
 
-function isNumericString(v: any): boolean {
-  return typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v.trim());
+function isNumber(v: any): boolean {
+  return /^-?\d+(\.\d+)?$/.test(v);
 }
 
 const BUILTIN_SCALARS = new Set([
-  "TEXT", // string except function literals e.g uuid(), now(), int()
-  "INT", // whole numbers
-  "INTEGER", // whole numbers
-  "BIGINT", // whole numbers
-  "SMALLINT", // whole numbers
-  "UUID", // uuid() or uuid string
-  "BOOLEAN", // false or true
-  "JSONB", // ...
+  "TEXT",
+  "INT",
+  "INTEGER",
+  "BIGINT",
+  "SMALLINT",
+  "UUID",
+  "BOOLEAN",
+  "JSONB",
   "TIMESTAMP",
   "TIMESTAMPTZ",
-  "DATE", // current_date, now() or valid date string (YYYY-MM-DD)
+  "DATE",
   "TIME",
   "TIMEZ",
   "NUMERIC",
@@ -39,8 +43,7 @@ function normalizeType(type: string): string {
   }
 
   if (BUILTIN_SCALARS.has(upper)) return upper;
-
-  return raw; // custom/enum
+  return raw;
 }
 
 function escapeLiteral(s: string) {
@@ -98,7 +101,6 @@ export function buildColumnSQL(
   }
 ): string {
   const parts: string[] = [];
-  // column name
   parts.push(`"${col.name}"`);
 
   if (col.__virtual) {
@@ -109,172 +111,152 @@ export function buildColumnSQL(
   const typNormalized = normalizeType(typRaw);
   const typUpper = typNormalized.toUpperCase();
 
-  // IDENTITY logic (int())
-  if (col.__identity && (typUpper === "INT" || typUpper === "INTEGER")) {
-    parts.push("INTEGER GENERATED ALWAYS AS IDENTITY");
-  }
-
-  // ARRAY TYPE
-  else if (isArrayType(typUpper)) {
+  if (col.__identity) {
+    let type = "INTEGER";
+    if (typUpper == "SMALLINT") type = "SMALLINT";
+    if (typUpper == "BIGINT") type = "BIGINT";
+    parts.push(`${type} GENERATED ALWAYS AS IDENTITY`);
+  } else if (isArrayType(typUpper)) {
     const base = typUpper.slice(0, -2);
     if (BUILTIN_SCALARS.has(base)) {
       parts.push(`${base}[]`);
     } else {
-      parts.push(`"${typRaw.replace(/\[\]$/, "").toLowerCase()}"[]`);
+      parts.push(`"${base}"[]`);
     }
-  }
-
-  // NORMAL TYPE
-  else {
+  } else {
     if (BUILTIN_SCALARS.has(typUpper)) {
       parts.push(typUpper);
     } else {
-      parts.push(`"${typRaw}"`);
+      // ENUM — always uppercase, quoted
+      parts.push(`"${canonicalType(typRaw)}"`);
     }
   }
-
-  // ------------------------------------------------------
-  // RELATION-BASED CONSTRAINTS (CREATE TABLE ONLY)
-  // ------------------------------------------------------
-  if (col.references) {
-    const rel = col.references.relation;
-
-    // NOT NULL by default for ALL relations
-    if (col.notNull !== false) {
-      parts.push("NOT NULL");
-    }
-
-    // ONE-TO-ONE → ALWAYS UNIQUE
-    if (rel === "ONE-TO-ONE") {
-      parts.push("UNIQUE");
-    }
+  // if col is primary key, ignore notNull and unique settings otherwise, allow both to be set
+  if (col.__primary) {
+    parts.push("PRIMARY KEY");
+  } else {
+    if (col.notNull) parts.push("NOT NULL");
+    if (col.unique) parts.push("UNIQUE");
   }
 
-  // PRIMARY KEY
-  if (col.__primary) parts.push("PRIMARY KEY");
-
-  // UNIQUE
-  if (col.unique) parts.push("UNIQUE");
-
-  // NOT NULL
-  if (col.notNull) parts.push("NOT NULL");
-
-  // ------------------------------------------------------
-  // DEFAULT
-  // ------------------------------------------------------
-  if (col.default !== undefined) {
-    const def = col.default;
-    const rawTrim = typeof def === "string" ? def.trim() : def;
-
-    // --- TEXT: always literal ---
-    if (typUpper === "TEXT") {
-      parts.push(`DEFAULT '${escapeLiteral(String(def))}'`);
-    }
-
-    // --- UUID ---
-    else if (typUpper === "UUID") {
-      if (def === null) {
-        parts.push("DEFAULT NULL");
-      } else if (typeof rawTrim === "string") {
-        const lower = rawTrim.toLowerCase();
-
-        if (lower === "uuid()") parts.push("DEFAULT gen_random_uuid()");
-        else if (/^[0-9a-fA-F-]{36}$/.test(rawTrim))
-          parts.push(`DEFAULT '${escapeLiteral(rawTrim)}'`);
-        else if (looksLikeFunction(rawTrim)) parts.push(`DEFAULT ${rawTrim}`);
-        else parts.push(`DEFAULT '${escapeLiteral(rawTrim)}'`);
-      } else {
-        parts.push(`DEFAULT '${escapeLiteral(String(def))}'`);
-      }
-    }
-
-    // --- numeric strings become numeric literals ---
-    else if (
-      isNumericString(def) &&
-      (typUpper === "INT" ||
-        typUpper === "INTEGER" ||
-        typUpper === "SMALLINT" ||
-        typUpper === "BIGINT" ||
-        typUpper === "NUMERIC" ||
-        typUpper === "DECIMAL")
-    ) {
-      parts.push(`DEFAULT ${def.trim()}`);
-    }
-
-    // --- int() identity ---
-    else if (typeof def === "string" && rawTrim.toLowerCase() === "int()") {
-      // identity is handled earlier
-    }
-
-    // --- arrays ---
-    else if (Array.isArray(def)) {
-      const elType = typUpper.endsWith("[]") ? typUpper.slice(0, -2) : typUpper;
-      const arrLit = formatPgArrayLiteral(def, elType);
-      parts.push(`DEFAULT '${arrLit}'`);
-    }
-
-    // --- string defaults (for non-TEXT scalar types) ---
-    else if (typeof def === "string") {
-      if (looksLikeFunction(rawTrim)) parts.push(`DEFAULT ${rawTrim}`);
-      else parts.push(`DEFAULT '${escapeLiteral(rawTrim)}'`);
-    }
-
-    // --- number / boolean ---
-    else if (typeof def === "number" || typeof def === "boolean") {
-      parts.push(`DEFAULT ${String(def)}`);
-    }
-
-    // --- null ---
-    else if (def === null) {
-      parts.push("DEFAULT NULL");
-    }
-
-    // --- JSON or object ---
-    else {
-      parts.push(`DEFAULT '${escapeLiteral(JSON.stringify(def))}'`);
-    }
-  }
-
-  // CHECK constraint
   if (col.check && !col.references) {
     try {
       const sqlCheck = parseCheck(String(col.check));
       parts.push(`CHECK (${sqlCheck})`);
     } catch (err: any) {
       console.error(
-        colors.red +
-          colors.bold +
-          `MORM CHECK SYNTAX ERROR in column "${col.name}":` +
-          colors.reset
+        `${colors.section}${colors.bold}CHECK VALIDATION:${colors.reset}`
       );
-      console.error(colors.red + `  CHECK: ${col.check}` + colors.reset);
-      console.error(colors.red + `  ERROR: ${err.message}` + colors.reset);
+      console.error(`  ${colors.subject}${col.name}${colors.reset}`);
+      console.error(`    ${colors.error}Error:${colors.reset} ${err.message}`);
 
-      // STOP processing this column, return partial SQL
       return parts.join(" ");
     }
   }
 
-  // ------------------------------------------------------
-  // FOREIGN KEY (inline)
-  // ------------------------------------------------------
-  // NOT NULL
-  if (col.notNull) parts.push("NOT NULL");
+  buildDefault(col, parts, typUpper);
 
-  // UNIQUE
-  if (col.unique) parts.push("UNIQUE");
-
-  // FOREIGN KEY
   if (col.references) {
     const ref = col.references;
-
     const onDelete = ref.onDelete ?? "CASCADE";
     const onUpdate = ref.onUpdate ?? "CASCADE";
+
+    if (normalizeRelation(ref.relation) === "ONE-TO-ONE") {
+      // if relation is ONE-TO-ONE, it should be not null and unique by default
+      if (col.notNull !== false) {
+        parts.push("NOT NULL");
+      }
+      // if relation is ONE-TO-ONE, it must always be uniquw
+      parts.push("UNIQUE");
+    }
 
     parts.push(
       `REFERENCES "${ref.table}"("${ref.column}")` +
         `ON DELETE ${onDelete} ON UPDATE ${onUpdate}`
     );
   }
+
   return parts.join(" ");
+}
+
+function buildDefault(col: any, parts: string[], typUpper: any) {
+  if (col.default !== undefined && !col.__identity) {
+    const def = col.default;
+    const raw = typeof def === "string" ? def.trim() : def;
+    const typeUpper = typUpper;
+
+    // uuid()
+    if (raw === "uuid()") {
+      parts.push("DEFAULT gen_random_uuid()");
+    }
+
+    // now() — type-aware
+    else if (raw === "now()") {
+      switch (typeUpper) {
+        case "TIME":
+          parts.push("DEFAULT CURRENT_TIME::time");
+          break;
+
+        case "TIMETZ":
+          parts.push("DEFAULT CURRENT_TIME");
+          break;
+
+        case "DATE":
+          parts.push("DEFAULT CURRENT_DATE");
+          break;
+
+        case "TIMESTAMP":
+          parts.push("DEFAULT CURRENT_TIMESTAMP::timestamp");
+          break;
+
+        case "TIMESTAMPTZ":
+          parts.push("DEFAULT CURRENT_TIMESTAMP");
+          break;
+
+        default:
+          throw new Error(`now() is not valid for column type ${typeUpper}`);
+      }
+    }
+
+    // arrays
+    else if (Array.isArray(def)) {
+      const elType = typeUpper.endsWith("[]")
+        ? typeUpper.slice(0, -2)
+        : typeUpper;
+      const arrLit = formatPgArrayLiteral(def, elType);
+      parts.push(`DEFAULT '${arrLit}'`);
+    }
+
+    // numeric
+    else if (
+      isNumber(def) &&
+      ["INT", "SMALLINT", "BIGINT", "DECIMAL"].includes(typeUpper)
+    ) {
+      parts.push(`DEFAULT ${raw}`);
+    }
+
+    // boolean
+    else if (typeof def === "boolean") {
+      parts.push(`DEFAULT ${def ? "TRUE" : "FALSE"}`);
+    }
+
+    // string literal or function
+    else if (typeof def === "string") {
+      if (looksLikeFunction(raw)) {
+        parts.push(`DEFAULT ${raw}`);
+      } else {
+        parts.push(`DEFAULT '${escapeLiteral(raw)}'`);
+      }
+    }
+
+    // null
+    else if (def === null) {
+      parts.push("DEFAULT NULL");
+    }
+
+    // json / object
+    else if (typeof def === "object") {
+      parts.push(`DEFAULT '${escapeLiteral(JSON.stringify(def))}'`);
+    }
+  }
 }

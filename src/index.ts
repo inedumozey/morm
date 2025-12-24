@@ -25,7 +25,22 @@ app.post("/", async (req, res) => {
   }
 });
 
-// Mount notes router
+/**
+ * MORM STORAGE
+ * sql/buildColumnSQL.ts
+ * utils/canonicalType.ts
+ * utils/logColors.ts
+ * migrations/alterColumn.ts
+ * migrations/alterColumnNullity.ts
+ * migrations/alterColumnTypes.ts
+ * migrations/alterColumnUnique.ts
+ * migrations/indexMigrations.ts
+ * migrations/resetDatabase.ts
+ * migrations/enumRegistry.ts
+ * model-types.ts
+ * utils/sanitize.ts
+ * migrations/alterColumnCheck.ts
+ */
 app.use("/docs", router.docsRouter);
 
 // usage
@@ -33,23 +48,32 @@ import { Morm } from "./morm/morm.js";
 const db = async (db_name: string) => {
   const db_url = `postgresql://postgres:postgres@localhost:5432/${db_name}`;
 
-  const morm = Morm.init(db_url, {}, (err: any, res: any) => {
-    if (err) {
-      console.log(err);
-    } else {
-      console.log("Database connected");
+  const morm = Morm.init(
+    db_url,
+    { transaction: { maxWait: 5000, timeout: 10000 } },
+    (err: any, res: any) => {
+      if (err) {
+        console.log(err);
+      } else {
+        console.log("Database connected");
+      }
     }
-  });
+  );
   return morm;
 };
 
 const morm = await db("drhmo");
+await morm?.transaction(async (tx) => {
+  // console.log({ tx });
+});
+
+morm?.enums([
+  { name: "USER_ROLE", values: ["ADMIN", "SUPERADMIN", "STUDENT"] },
+  { name: "SCHOOL", values: ["STUDENT", "TEACHER"] },
+]);
 
 const Profile = morm?.model({
   table: "profile",
-  enums: [
-    { name: "PROFILE_ROLES", values: ["ADMIN", "SUPERADMIN", "STUDENT"] },
-  ],
   columns: [
     {
       name: "id",
@@ -64,8 +88,8 @@ const Profile = morm?.model({
         table: "users",
         column: "id",
         relation: "nn",
-        onDelete: "CASCADE",
-        onUpdate: "CASCADE",
+        onDelete: "RESTRICT",
+        onUpdate: "NO ACTION",
       },
     },
   ],
@@ -73,9 +97,9 @@ const Profile = morm?.model({
 
 const User = morm?.model({
   table: "users",
-  enums: [{ name: "USER_ROLES", values: ["ADMIN", "STUDENT"] }],
   columns: [
-    { name: "id", type: "uuid", primary: true, default: "uuid()" },
+    { name: "ID", type: "uuid", primary: true, default: "uuid()" },
+    { name: "role", type: "USER_ROLE", default: "ADMIN" },
     {
       name: "referrer_id",
       type: "uuid",
@@ -83,6 +107,17 @@ const User = morm?.model({
         table: "users",
         column: "id",
         relation: "nm", // ONE-TO-MANY
+        onDelete: "SET NULL",
+        onUpdate: "SET DEFAULT",
+      },
+    },
+    {
+      name: "referrer_ids",
+      type: "uuid[]",
+      references: {
+        table: "users",
+        column: "id",
+        relation: "mm", // MANY-TO-MANY
       },
     },
     {
@@ -91,20 +126,67 @@ const User = morm?.model({
       references: {
         table: "position",
         column: "id",
-        relation: "mm",
+        relation: "mm", // MANY-TO-MANY
       },
     },
   ],
 });
+
 const Position = morm?.model({
   table: "position",
   columns: [
-    { name: "id", type: "uuid", primary: true, default: "uuid()" },
-    { name: "title", type: "text", notNull: true },
+    {
+      name: "id",
+      type: "uuid",
+      primary: true,
+      default: "uuid()",
+      notNull: false,
+      unique: true,
+    },
+    {
+      name: "name",
+      type: "int",
+      notNull: true,
+      unique: true,
+      default: 6,
+    },
+    {
+      name: "email",
+      type: "text",
+      notNull: true,
+      unique: true,
+      default: "inedumozey@gmail.",
+    },
+    {
+      name: "colr",
+      type: "text[]",
+      default: ["red", "blue", "green"],
+      notNull: false,
+      unique: true,
+    },
+    {
+      name: "m",
+      type: "int",
+      default: "int()",
+    },
   ],
+  indexes: ["id", "name"],
+  sanitize: true, // false
 });
 
-// await morm?.migrate({ clean: true });
-await morm?.migrate({ clean: true, reset: true });
+// await morm?.migrate();
+await morm?.migrate({ reset: true });
+
+// Design diffJunctionTables() (step-by-step)
+// Handle junction renames cleanly
+// Handle dropping removed MM relations safely
+// Move to query/runtime layer
+
+/**
+ * Remaining tasks:
+ * default
+ * foreign keys
+ * junction tables
+ */
 
 app.listen(4000, () => console.log("Server running on port 4000"));

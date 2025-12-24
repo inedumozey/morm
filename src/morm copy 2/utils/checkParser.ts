@@ -1,5 +1,12 @@
 // utils/checkParser.ts
 
+// Parse a JS-like boolean expression into a PostgreSQL-compatible boolean expression.
+// Supports: identifiers, function calls, numbers, strings, booleans, null, parentheses,
+// operators: === == !== != > >= < <= && || AND OR !
+
+// ------------------------------------------------------
+// TOKEN TYPES
+// ------------------------------------------------------
 type Token =
   | { type: "num"; value: string }
   | { type: "str"; value: string }

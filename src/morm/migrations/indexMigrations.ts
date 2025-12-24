@@ -1,11 +1,12 @@
+// migrations/indexMigrations.ts
+
 import { colors } from "../utils/logColors.js";
 
 /**
  * - Migrate indexes:
  * - add missing indexes
  * - drop stale indexes
- * - no repeated creation
- * - supports clean & reset drop logic
+ * - log ONLY when something actually changes
  */
 
 export async function indexMigrations(
@@ -16,16 +17,17 @@ export async function indexMigrations(
   },
   messages: string[]
 ) {
-  // Normalize model list
   const modelIndexes = new Set<string>(
     (config.indexes ?? []).map((c) => String(c))
   );
 
-  // ========= READ EXISTING INDEXES ========
+  /* ---------- READ EXISTING ---------- */
   const res = await client.query(
-    `SELECT indexname
-     FROM pg_indexes
-     WHERE tablename = $1`,
+    `
+    SELECT indexname
+    FROM pg_indexes
+    WHERE tablename = $1
+    `,
     [config.table]
   );
 
@@ -34,46 +36,61 @@ export async function indexMigrations(
     existingIndexes.add(String(row.indexname));
   }
 
-  // ========= DESIRED INDEX NAMES =========
+  /* ---------- DESIRED ---------- */
   const desiredIndexNames = new Set<string>();
   for (const col of modelIndexes) {
     desiredIndexNames.add(`${config.table}_${col}_idx`);
   }
 
-  // ========= DROP STALE INDEXES =========
+  /* ---------- DROP STALE ---------- */
   for (const idxName of existingIndexes) {
-    // skip primary key
+    // never touch primary keys
     if (idxName.startsWith(`${config.table}_pkey`)) continue;
 
-    // only drop morm-style indexes
+    // only manage MORM-style indexes
     if (!idxName.startsWith(`${config.table}_`) || !idxName.endsWith(`_idx`)) {
       continue;
     }
 
-    // index not required anymore (includes: modelIndexes = [])
     if (!desiredIndexNames.has(idxName)) {
-      await client.query(`DROP INDEX IF EXISTS "${idxName}"`);
-      messages.push(`${colors.green}Dropped index "${idxName}"${colors.reset}`);
+      await client.query(`DROP INDEX "${idxName}"`);
+      messages.push(
+        `${colors.success}Dropped INDEX:${colors.reset} ${colors.subject}${idxName}${colors.reset}`
+      );
     }
   }
 
-  // ========= ADD MISSING INDEXES =========
+  /* ---------- CREATE MISSING ---------- */
+  /* ---------- VALIDATE INDEX COLUMNS ---------- */
+  const colsRes = await client.query(
+    `
+  SELECT column_name
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND LOWER(table_name) = LOWER($1)
+  `,
+    [config.table]
+  );
+
+  const dbCols = new Set(colsRes.rows.map((r: any) => String(r.column_name)));
+
+  /* ---------- CREATE MISSING ---------- */
   for (const col of modelIndexes) {
+    if (!dbCols.has(col)) {
+      throw new Error(
+        `Invalid index definition: column "${col}" does not exist ` +
+          `on table "${config.table}"`
+      );
+    }
+
     const idxName = `${config.table}_${col}_idx`;
     if (!existingIndexes.has(idxName)) {
       await client.query(
-        `CREATE INDEX IF NOT EXISTS "${idxName}" ON "${config.table}"("${col}")`
+        `CREATE INDEX "${idxName}" ON "${config.table}"("${col}")`
       );
       messages.push(
-        `${colors.green}Created index "${idxName}" on "${col}"${colors.reset}`
+        `${colors.success}Created INDEX:${colors.reset} ${colors.subject}${idxName}${colors.reset}`
       );
     }
-  }
-
-  // ========= NOTHING TO DO =========
-  // If model has no indexes and we dropped nothing — stay silent
-  if (messages.length === 0 && modelIndexes.size === 0) {
-    // no logging at all
-    return;
   }
 }

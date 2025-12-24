@@ -129,7 +129,7 @@ export class Model {
         const targetKey = col.reference.column;
         const localKey = col.name;
 
-        // belongsTo relation (this -> target)
+        // belongsTo relation (this → target)
         this.relations[relName] = {
           name: relName,
           kind: "belongs-to",
@@ -142,7 +142,7 @@ export class Model {
     }
   }
 
-  // Generate relation name from column: user_id -> user, author -> author
+  // Generate relation name from column: user_id → user, author → author
   private inferRelationNameFromColumn(column: string, targetTable?: string) {
     if (column.endsWith("_id")) {
       return column.replace(/_id$/, "");
@@ -167,7 +167,7 @@ export class Model {
       meta.model = target;
 
       // create a reverse relation on target
-      const reverseName = this.table; // e.g., users -> posts: reverse 'posts'
+      const reverseName = this.table; // e.g., users → posts: reverse 'posts'
       // Determine reverse kind: if this.localKey references target.pk and local col not unique: one-to-many
       const localCol = this.columns.find((c) => c.name === meta.localKey);
       const targetColDef = target.columns.find(
@@ -622,7 +622,7 @@ export class Model {
 
         // two cases: belongs-to is stored on this table (fk present) OR reverse is on other table
         if (relMeta.kind === "belongs-to") {
-          // e.g., posts.user -> posts has user_id
+          // e.g., posts.user → posts has user_id
           for (const r of rows) {
             const fk = r[relMeta.localKey];
             if (fk == null) {
@@ -643,7 +643,7 @@ export class Model {
         }
 
         if (relMeta.kind === "one-to-many") {
-          // e.g., user.posts -> posts table has foreign key to users
+          // e.g., user.posts → posts table has foreign key to users
           // use localKey value from this row to query target table
           for (const r of rows) {
             const localVal = r[relMeta.localKey];

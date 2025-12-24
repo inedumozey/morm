@@ -55,15 +55,6 @@ export function createModelRuntime(
   if (primaryCols.length > 1) {
     const list = primaryCols.map((c: any) => `"${c.name}"`).join(", ");
 
-    // Push a clean migration-style error
-    morm._migrationSummary ??= [];
-    morm._migrationSummary.push({
-      table: config.table,
-      ok: false,
-      changed: 0,
-      skipped: 0,
-    });
-
     console.log(
       `${colors.red}${colors.bold}MORM MIGRATION ERROR: table "${config.table}" has multiple primary keys:${colors.reset}`
     );
@@ -178,16 +169,6 @@ export function createModelRuntime(
         ).length;
 
         if (changed > 0 || skipped > 0) {
-          morm._migrationSummary ??= [];
-          morm._migrationSummary.push({
-            table: config.table,
-            ok: true,
-            changed,
-            skipped,
-          });
-        }
-
-        if (changed > 0 || skipped > 0) {
           console.log(
             `${colors.bold}${colors.magenta}MORM MIGRATION: ${config.table}${colors.reset}`
           );
@@ -201,16 +182,6 @@ export function createModelRuntime(
           `${colors.red}${colors.bold}MORM ERROR in model migrate "${config.table}":${colors.reset}`
         );
         console.error(`${colors.red}${err.message}${colors.reset}`);
-
-        morm._migrationSummary ??= [];
-        morm._migrationSummary.push({
-          table: config.table,
-          ok: false,
-          changed: 0,
-          skipped: 0,
-        });
-
-        morm._migrationSummary ??= [];
         return false;
       }
     },
