@@ -27,19 +27,23 @@ app.post("/", async (req, res) => {
 
 /**
  * MORM STORAGE
+ * model-types.ts
  * sql/buildColumnSQL.ts
  * utils/canonicalType.ts
  * utils/logColors.ts
+ * utils/relationValidator.ts
+ * utils/junctionBuilder.ts
+ * utils/validateColumnType.ts
+ * utils/sanitize.ts
+ * utils/checkParser.ts
  * migrations/alterColumn.ts
+ * migrations/alterColumnCheck.ts
  * migrations/alterColumnNullity.ts
  * migrations/alterColumnTypes.ts
  * migrations/alterColumnUnique.ts
+ * migrations/enumRegistry.ts
  * migrations/indexMigrations.ts
  * migrations/resetDatabase.ts
- * migrations/enumRegistry.ts
- * model-types.ts
- * utils/sanitize.ts
- * migrations/alterColumnCheck.ts
  */
 app.use("/docs", router.docsRouter);
 
@@ -77,7 +81,7 @@ const Profile = morm?.model({
   columns: [
     {
       name: "id",
-      type: "UUID",
+      type: "uuid",
       primary: true,
       default: "uuid()",
     },
@@ -91,6 +95,18 @@ const Profile = morm?.model({
         onDelete: "RESTRICT",
         onUpdate: "NO ACTION",
       },
+    },
+  ],
+});
+
+const account = morm?.model({
+  table: "account",
+  columns: [
+    {
+      name: "id",
+      type: "UUID",
+      primary: true,
+      default: "uuid()",
     },
   ],
 });
@@ -166,8 +182,8 @@ const Position = morm?.model({
     },
     {
       name: "m",
-      type: "int",
-      default: "int()",
+      type: "uuid",
+      default: "uuid()",
     },
   ],
   indexes: ["id", "name"],

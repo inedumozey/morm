@@ -10,7 +10,7 @@ type Counts = {
   total: number;
 };
 
-type DbUniqueSet = Set<string>;
+type DbUniqueMap = Map<string, string>; // column -> constraint name
 
 /* ===================================================== */
 /* HELPERS                                               */
@@ -18,10 +18,6 @@ type DbUniqueSet = Set<string>;
 
 function q(n: string) {
   return `"${n.replace(/"/g, '""')}"`;
-}
-
-function uniqueName(table: string, col: string) {
-  return `${table}_${col}_unique`;
 }
 
 function isAllowedUniqueDefault(def: any): boolean {
@@ -35,7 +31,7 @@ function isAllowedUniqueDefault(def: any): boolean {
 async function getUniqueConstraints(
   client: any,
   table: string
-): Promise<DbUniqueSet> {
+): Promise<DbUniqueMap> {
   const res = await client.query(
     `
     SELECT
@@ -53,8 +49,11 @@ async function getUniqueConstraints(
     [table]
   );
 
-  // return new Set<string>(res.rows.map((r: { conname: string }) => r.conname));
-  return new Set<string>(res.rows.map((r: { column: string }) => r.column));
+  const map = new Map<string, string>();
+  for (const r of res.rows) {
+    map.set(r.column, r.conname);
+  }
+  return map;
 }
 
 /* ===================================================== */
@@ -76,10 +75,9 @@ export async function alterColumnUnique(opts: {
     if (col.__virtual) continue;
     if (col.__primary) continue;
 
-    const uName = uniqueName(table, col.name);
-
     const wantsUnique = !!col.unique;
     const hasUnique = dbUniques.has(col.name);
+    const constraintName = dbUniques.get(col.name);
 
     /* ---------- NO CHANGE ---------- */
     if (wantsUnique === hasUnique) continue;
@@ -105,11 +103,7 @@ export async function alterColumnUnique(opts: {
         }
       }
 
-      await client.query(
-        `ALTER TABLE ${q(table)} ADD CONSTRAINT ${q(uName)} UNIQUE (${q(
-          col.name
-        )})`
-      );
+      await client.query(`ALTER TABLE ${q(table)} ADD UNIQUE (${q(col.name)})`);
 
       messages.push(
         `${colors.success}Added UNIQUE:${colors.reset} ${colors.subject}${col.name}${colors.reset}`
@@ -122,11 +116,13 @@ export async function alterColumnUnique(opts: {
     /* DROP UNIQUE                                           */
     /* ===================================================== */
 
-    if (!wantsUnique && hasUnique) {
-      await client.query(`ALTER TABLE ${q(table)} DROP CONSTRAINT ${q(uName)}`);
+    if (!wantsUnique && hasUnique && constraintName) {
+      await client.query(
+        `ALTER TABLE ${q(table)} DROP CONSTRAINT ${q(constraintName)}`
+      );
 
       messages.push(
-        `${colors.success}Drpped UNIQUE:${colors.reset} ${colors.subject}${col.name}${colors.reset}`
+        `${colors.success}Dropped UNIQUE:${colors.reset} ${colors.subject}${col.name}${colors.reset}`
       );
     }
   }

@@ -14,12 +14,12 @@ export async function indexMigrations(
   config: {
     table: string;
     indexes?: readonly string[] | undefined;
-  },
-  messages: string[]
-) {
+  }
+): Promise<string[]> {
   const modelIndexes = new Set<string>(
     (config.indexes ?? []).map((c) => String(c))
   );
+  const createdIndexes: string[] = [];
 
   /* ---------- READ EXISTING ---------- */
   const res = await client.query(
@@ -54,9 +54,7 @@ export async function indexMigrations(
 
     if (!desiredIndexNames.has(idxName)) {
       await client.query(`DROP INDEX "${idxName}"`);
-      messages.push(
-        `${colors.success}Dropped INDEX:${colors.reset} ${colors.subject}${idxName}${colors.reset}`
-      );
+      createdIndexes.push(idxName);
     }
   }
 
@@ -88,9 +86,9 @@ export async function indexMigrations(
       await client.query(
         `CREATE INDEX "${idxName}" ON "${config.table}"("${col}")`
       );
-      messages.push(
-        `${colors.success}Created INDEX:${colors.reset} ${colors.subject}${idxName}${colors.reset}`
-      );
+      createdIndexes.push(idxName);
     }
   }
+
+  return createdIndexes;
 }

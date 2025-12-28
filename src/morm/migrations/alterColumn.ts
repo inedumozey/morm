@@ -172,7 +172,6 @@ export async function alterColumn(opts: {
   /* ===================================================== */
   /* 3. DROP COLUMNS                                      */
   /* ===================================================== */
-
   for (const name of missingInModel) {
     if (!tableHasData) {
       await client.query(`ALTER TABLE ${q(table)} DROP COLUMN ${q(name)}`);

@@ -18,7 +18,9 @@ function subject(v: string) {
  */
 export async function resetDatabase(client: any) {
   console.log(`${colors.section}${colors.bold}DATABASE RESET:${colors.reset}`);
-
+  const droppedExtensions: string[] = [];
+  const droppedTables: string[] = [];
+  const droppedEnums: string[] = [];
   /* ─────────────────────────────── */
   /* EXTENSIONS                      */
   /* ─────────────────────────────── */
@@ -30,11 +32,7 @@ export async function resetDatabase(client: any) {
 
   for (const e of exts.rows) {
     await client.query(`DROP EXTENSION IF EXISTS "${e.extname}" CASCADE`);
-    console.log(
-      `  ${colors.processing}Dropped extension:${colors.reset} ${subject(
-        e.extname
-      )}`
-    );
+    droppedExtensions.push(e.extname);
   }
 
   /* ─────────────────────────────── */
@@ -48,11 +46,7 @@ export async function resetDatabase(client: any) {
 
   for (const t of tables.rows) {
     await client.query(`DROP TABLE IF EXISTS "${t.tablename}" CASCADE`);
-    console.log(
-      `  ${colors.processing}Dropped table:${colors.reset} ${subject(
-        t.tablename
-      )}`
-    );
+    droppedTables.push(t.tablename);
   }
 
   /* ─────────────────────────────── */
@@ -67,8 +61,31 @@ export async function resetDatabase(client: any) {
 
   for (const e of enums.rows) {
     await client.query(`DROP TYPE IF EXISTS "${e.typname}" CASCADE`);
+    droppedEnums.push(e.typname);
+  }
+
+  /** PRINT MESSAGES */
+  if (droppedExtensions.length > 0) {
     console.log(
-      `  ${colors.processing}Dropped enum:${colors.reset} ${subject(e.typname)}`
+      `  ${colors.processing}Dropped extensions:${colors.reset} ${subject(
+        droppedExtensions.join(", ")
+      )}`
+    );
+  }
+
+  if (droppedTables.length > 0) {
+    console.log(
+      `  ${colors.processing}Dropped tables:${colors.reset} ${subject(
+        droppedTables.join(", ")
+      )}`
+    );
+  }
+
+  if (droppedEnums.length > 0) {
+    console.log(
+      `  ${colors.processing}Dropped enums:${colors.reset} ${subject(
+        droppedEnums.join(", ")
+      )}`
     );
   }
 

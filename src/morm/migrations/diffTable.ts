@@ -5,6 +5,8 @@ import { alterColumnTypes } from "./alterColumnTypes.js";
 import { alterColumnNullity } from "./alterColumnNullity.js";
 import { alterColumnUnique } from "./alterColumnUnique.js";
 import { alterColumnDefault } from "./alterColumnDefault.js";
+import { dropAddTable } from "./dropAddTable.js";
+import { alterPrimaryKey } from "./alterPrimaryKey.js";
 
 /* ===================================================== */
 /* TYPES                                                 */
@@ -52,6 +54,7 @@ export async function diffTable(
   config: { table: string },
   processed: any[]
 ) {
+  processed = processed.filter((c) => !c.__identity);
   const alters: string[] = [];
   const messages: string[] = [];
 
@@ -72,7 +75,7 @@ export async function diffTable(
   const existingNames = Array.from(existing.keys());
   const counts = await batchCounts(client, config.table, existingNames);
 
-  /* 1. ---------- CREATE OR ALTER COLUMN NAMES ---------- */
+  /* 1. ---------- CREATE OR ALTER COLUMN NAMES ------------ */
   {
     const rename = await alterColumn({
       client,
@@ -87,7 +90,19 @@ export async function diffTable(
     }
   }
 
-  /* 2. ---------- CREATE OR ALTER COLUMN TYPES ---------- */
+  /* 2. ---------- ALTER PRIMARY KEY -------------------------------- */
+  {
+    const pk = await alterPrimaryKey({
+      client,
+      table: config.table,
+      processed,
+      counts,
+      messages,
+    });
+    if (!pk.ok) return false;
+  }
+
+  /* 3. ---------- CREATE OR ALTER COLUMN TYPES ------------- */
   {
     const typeRes = await alterColumnTypes({
       client,
@@ -102,7 +117,7 @@ export async function diffTable(
     }
   }
 
-  /* 3. ---------- CREATE OR ALTER NULL CONSTRAINT ---------- */
+  /* 4. ---------- CREATE OR ALTER NULL CONSTRAINT ----------- */
   {
     const typeNull = await alterColumnNullity({
       client,
@@ -117,7 +132,7 @@ export async function diffTable(
     }
   }
 
-  /* 4. ---------- CREATE OR ALTER NULL CONSTRAINT ---------- */
+  /* 5. ---------- CREATE OR ALTER NULL CONSTRAINT ----------- */
   {
     const typeUnique = await alterColumnUnique({
       client,
@@ -131,7 +146,7 @@ export async function diffTable(
     }
   }
 
-  /* 5. ---------- CREATE OR ALTER CHECK CONSTRAINT ---------- */
+  /* 5. ---------- CREATE OR ALTER CHECK CONSTRAINT ----------- */
   {
     const typeCheck = await alterColumnCheck({
       client,
@@ -144,7 +159,7 @@ export async function diffTable(
     }
   }
 
-  /* 6. ---------- CREATE / UPDATE / DROP DEFAULT ---------- */
+  /* 6. ---------- CREATE / UPDATE / DROP DEFAULT ------------- */
   {
     const typeDefault = await alterColumnDefault({
       client,

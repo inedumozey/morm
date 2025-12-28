@@ -77,9 +77,6 @@ export async function alterColumnDefault({
     // virtual columns never have defaults
     if (col.__virtual) continue;
 
-    // identity columns NEVER use DEFAULT
-    // if (col.__identity) continue;
-
     const row = existing.get(col.name);
     if (!row) continue;
 

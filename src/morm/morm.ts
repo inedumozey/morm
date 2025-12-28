@@ -9,6 +9,7 @@ import { buildJunctionTables } from "./utils/junctionBuilder.js";
 import type { ColumnDefinition } from "./model-types.js";
 import { EnumRegistry, migrateEnumsGlobal } from "./migrations/enumRegistry.js";
 import { resetDatabase } from "./migrations/resetDatabase.js";
+import { dropAddTable } from "./migrations/dropAddTable.js";
 
 export interface TransactionOptions {
   maxWait?: number;
@@ -20,6 +21,19 @@ export interface MormOptions {
   transaction?: TransactionOptions;
 }
 
+async function tableExists(client: any, table: string): Promise<boolean> {
+  const res = await client.query(
+    `
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = $1
+    `,
+    [table]
+  );
+  return res.rowCount > 0;
+}
+
 export class Morm {
   private pool!: InstanceType<typeof Pool>;
   private url!: URL;
@@ -27,6 +41,7 @@ export class Morm {
   private models: any[] = [];
   private _migrating: boolean = false;
   private enumRegistry = new EnumRegistry();
+  private _indexSummary: any;
 
   /** --------------------------------------------------
    * Instance cache: ensures one Morm per URL
@@ -208,6 +223,7 @@ export class Morm {
     this._migrating = true;
 
     const options = { clean: true, reset: false, ...option };
+    const createdTables = new Set<string>();
 
     // DATABASE RESET => reset:true
     if (options.reset) {
@@ -289,8 +305,78 @@ export class Morm {
       await client.query("BEGIN");
       await client.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
 
+      const junction = buildJunctionTables(this.models);
+      const junctionTables = new Set(junction.map((j) => j.table));
+
+      /* ===================================================== */
+      /* PASS 1 — TABLE DROP / CREATE (GLOBAL)                 */
+      /* ===================================================== */
+
+      const dbTables = (
+        await client.query(`
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+    `)
+      ).rows.map((r: any) => r.table_name);
+
+      const modelTables = new Set(this.models.map((m) => m.table));
+      const tableMessages: string[] = [];
+
+      // DROP tables not in models
+      for (const t of dbTables) {
+        if (junctionTables.has(t)) continue;
+        const res = await dropAddTable({
+          client,
+          table: t,
+          modelTables,
+          messages: tableMessages,
+        });
+        if (!res.ok) {
+          await client.query("ROLLBACK");
+          this._migrating = false;
+          return false;
+        }
+      }
+
+      // CREATE tables missing in DB
       for (const model of this.models) {
-        const ok = await model.migrate(client, options);
+        const res = await dropAddTable({
+          client,
+          table: model.table,
+          modelTables,
+          modelColumns: model.columns,
+          messages: tableMessages,
+        });
+        if (res?.created) {
+          createdTables.add(model.table);
+        }
+        if (!res.ok) {
+          await client.query("ROLLBACK");
+          this._migrating = false;
+          return false;
+        }
+      }
+
+      /* ---------- PRINT TABLE-LEVEL LOGS ---------- */
+      const createdTableMsg = tableMessages
+        .filter((m: any) => m.includes("Created TABLE:"))
+        .map((m: any) => m.split("Created TABLE:")[1].trim());
+
+      if (createdTableMsg.length > 0) {
+        console.log(
+          `${colors.section}${colors.bold}MODEL MIGRATION:${colors.reset}`
+        );
+        console.log(
+          `  ${colors.success}Created TABLE:${colors.reset} ${
+            colors.subject
+          }${createdTableMsg.join(", ")}${colors.reset}`
+        );
+        console.log("");
+      }
+
+      for (const model of this.models) {
+        const ok = await model.migrate(client, createdTables);
         if (!ok) {
           await client.query("ROLLBACK");
           this._migrating = false;
@@ -300,16 +386,48 @@ export class Morm {
 
       /* ---------- JUNCTION TABLES ---------- */
       const junctions = buildJunctionTables(this.models);
-      for (const j of junctions) {
-        await client.query(j.createSQL);
-        for (const idx of j.indexSQL ?? []) await client.query(idx);
+      const createdJunctions: string[] = [];
 
+      for (const j of junctions) {
+        const exists = await tableExists(client, j.table);
+        if (exists) continue;
+
+        await client.query(j.createSQL);
+        for (const idx of j.indexSQL ?? []) {
+          await client.query(idx);
+        }
+
+        createdJunctions.push(j.table);
+      }
+
+      /**------LOG OUT MESSAGES */
+      if (this._indexSummary?.size) {
         console.log(
-          `${colors.section}${colors.bold}MORM MIGRATION:${colors.reset}`
+          `${colors.section}${colors.bold}INDEX MIGRATION:${colors.reset}`
+        );
+
+        for (const [table, indexes] of this._indexSummary.entries()) {
+          console.log(`  ${colors.subject}${table}${colors.reset}`);
+          console.log(
+            `    ${colors.success}Created:${colors.reset} ${
+              colors.subject
+            }${indexes.join(", ")}${colors.reset}`
+          );
+        }
+
+        console.log("");
+      }
+
+      if (createdJunctions.length > 0) {
+        console.log(
+          `${colors.section}${colors.bold}JUNCTION TABLE MIGRATION:${colors.reset}`
         );
         console.log(
-          `  ${colors.success}Created:${colors.reset} ${colors.subject}${j.table}${colors.reset}`
+          `  ${colors.success}Created:${colors.reset} ${
+            colors.subject
+          }${createdJunctions.join(", ")}${colors.reset}`
         );
+        console.log("");
       }
 
       await client.query("COMMIT");

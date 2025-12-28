@@ -9,7 +9,6 @@ import type { ColumnDefinition } from "./model-types.js";
 import { colors } from "./utils/logColors.js";
 import { parseCheck } from "./utils/checkParser.js";
 import { normalizeRelation } from "./utils/relationValidator.js";
-import { canonicalType } from "./utils/canonicalType.js";
 
 export function createModelRuntime(
   morm: any,
@@ -139,6 +138,14 @@ export function createModelRuntime(
     /* MARK COLUMNS WITH MANY-TO-MANY VIRTUAL COLUMNS----------------------------- */
     if (c.references?.relation) {
       const rel = normalizeRelation(c.references.relation);
+      // ONE-TO-ONE implies UNIQUE and (by default) NOT NULL
+      if (rel === "ONE-TO-ONE") {
+        if (c.notNull !== false) {
+          c.notNull = true;
+        }
+        c.unique = true;
+      }
+
       if (rel === "MANY-TO-MANY") {
         c.__virtual = true;
         continue;
@@ -191,19 +198,6 @@ export function createModelRuntime(
       ${columnsSQL}
     );
   `;
-
-  async function tableExists(client: any) {
-    const res = await client.query(
-      `
-      SELECT EXISTS (
-        SELECT 1 FROM information_schema.tables
-        WHERE LOWER(table_name)=LOWER($1)
-      )
-      `,
-      [config.table]
-    );
-    return res.rows[0].exists;
-  }
 
   async function ensureUpdatedAtTrigger(client: any) {
     try {
@@ -259,34 +253,25 @@ export function createModelRuntime(
     sanitize: config.sanitize ?? false,
     sanitizeRow,
 
-    async migrate(client: any, options?: { clean?: boolean; reset?: boolean }) {
+    async migrate(client: any, createdTables?: Set<string>) {
       const messages: string[] = [];
+      if (createdTables?.has(config.table)) {
+        return true;
+      }
       try {
-        if (!(await tableExists(client))) {
-          await client.query(createTableSQL);
-          messages.push(
-            `${colors.success}Created:${colors.reset} ${colors.subject}${config.table}${colors.reset}`
-          );
-          await ensureUpdatedAtTrigger(client);
-        } else {
-          const diff = await diffTable(
-            client,
-            { table: config.table },
-            processed
-          );
-          if (diff) messages.push(...diff);
-          await ensureUpdatedAtTrigger(client);
-        }
+        const diff = await diffTable(
+          client,
+          { table: config.table },
+          processed
+        );
+        if (diff) messages.push(...diff);
+        await ensureUpdatedAtTrigger(client);
 
-        await indexMigrations(client, config, messages);
+        const indexChanges = await indexMigrations(client, config);
 
-        if (messages.length > 0) {
-          console.log(
-            `${colors.section}${colors.bold}MODEL MIGRATION:${colors.reset}`
-          );
-          console.log(`  ${colors.subject}${config.table}${colors.reset}`);
-          for (const m of messages) console.log(`    ${m}`);
-          console.log("");
+        if (indexChanges.length > 0) {
+          morm._indexSummary ??= new Map();
+          morm._indexSummary.set(config.table, indexChanges);
         }
 
         const changed = messages.filter((m) =>
