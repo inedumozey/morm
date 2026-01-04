@@ -5,11 +5,11 @@ import { Pool } from "pg";
 import { createModelRuntime } from "./model.js";
 import { colors } from "./utils/logColors.js";
 import { validateAndSortModels } from "./utils/relationValidator.js";
-import { buildJunctionTables } from "./utils/junctionBuilder.js";
 import type { ColumnDefinition } from "./model-types.js";
 import { EnumRegistry, migrateEnumsGlobal } from "./migrations/enumRegistry.js";
 import { resetDatabase } from "./migrations/resetDatabase.js";
-import { dropAddTable } from "./migrations/dropAddTable.js";
+import { tableMigrations } from "./migrations/tableMigrations.js";
+import { renderJunctionBuilder } from "./utils/junctionBuilder.js";
 
 export interface TransactionOptions {
   maxWait?: number;
@@ -19,19 +19,6 @@ export interface TransactionOptions {
 export interface MormOptions {
   allowSSL?: boolean;
   transaction?: TransactionOptions;
-}
-
-async function tableExists(client: any, table: string): Promise<boolean> {
-  const res = await client.query(
-    `
-    SELECT 1
-    FROM information_schema.tables
-    WHERE table_schema = 'public'
-      AND table_name = $1
-    `,
-    [table]
-  );
-  return res.rowCount > 0;
 }
 
 export class Morm {
@@ -221,17 +208,16 @@ export class Morm {
   async migrate(option?: { clean?: boolean; reset?: boolean }) {
     if (this._migrating) return false;
     this._migrating = true;
+    const client = await this.pool.connect();
 
     const options = { clean: true, reset: false, ...option };
-    const createdTables = new Set<string>();
 
-    // DATABASE RESET => reset:true
+    /* ---- DATABASE RESET => reset:true--- */
     if (options.reset) {
       await resetDatabase(this.pool);
     }
 
     /* ---------- ENUM MIGRATION ---------- */
-    // ENUM DEFINITION ERRORS → LOG + ABORT (NO THROW)
     if (this.enumRegistry.hasErrors()) {
       this.enumRegistry.printErrors();
 
@@ -243,7 +229,7 @@ export class Morm {
     // SAFE: only pass resolved enum data
     await migrateEnumsGlobal(this.pool, this.enumRegistry.all());
 
-    /* ---------- HARD MODEL VALIDATION ---------- */
+    /* ----------MODEL VALIDATION ---------- */
     for (const model of this.models) {
       if (model.sql.create === "") {
         console.log(
@@ -255,32 +241,6 @@ export class Morm {
         this._migrating = false;
         return false;
       }
-    }
-
-    /* ---------- TABLE RENAME DETECTION ---------- */
-    const dbTables = (
-      await this.pool.query(`
-      SELECT table_name
-      FROM information_schema.tables
-      WHERE table_schema = 'public'
-    `)
-    ).rows.map((r: any) => r.table_name);
-
-    const modelTables = this.models.map((m) => m.table);
-    const removed = dbTables.filter((t) => !modelTables.includes(t));
-    const added = modelTables.filter((t) => !dbTables.includes(t));
-
-    if (removed.length === 1 && added.length === 1) {
-      console.log(
-        `${colors.section}${colors.bold}MORM MIGRATION:${colors.reset}`
-      );
-      console.log(
-        `  ${colors.processing}Renamed:${colors.reset} ${colors.subject}${removed[0]} → ${added[0]}${colors.reset}`
-      );
-
-      await this.pool.query(
-        `ALTER TABLE "${removed[0]}" RENAME TO "${added[0]}"`
-      );
     }
 
     /* ---------- RELATION VALIDATION ---------- */
@@ -300,105 +260,12 @@ export class Morm {
     if (relRes.sorted) this.models = relRes.sorted;
 
     /* ---------- APPLY MIGRATIONS ---------- */
-    const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       await client.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
 
-      const junction = buildJunctionTables(this.models);
-      const junctionTables = new Set(junction.map((j) => j.table));
-
-      /* ===================================================== */
-      /* PASS 1 — TABLE DROP / CREATE (GLOBAL)                 */
-      /* ===================================================== */
-
-      const dbTables = (
-        await client.query(`
-      SELECT table_name
-      FROM information_schema.tables
-      WHERE table_schema = 'public'
-    `)
-      ).rows.map((r: any) => r.table_name);
-
-      const modelTables = new Set(this.models.map((m) => m.table));
-      const tableMessages: string[] = [];
-
-      // DROP tables not in models
-      for (const t of dbTables) {
-        if (junctionTables.has(t)) continue;
-        const res = await dropAddTable({
-          client,
-          table: t,
-          modelTables,
-          messages: tableMessages,
-        });
-        if (!res.ok) {
-          await client.query("ROLLBACK");
-          this._migrating = false;
-          return false;
-        }
-      }
-
-      // CREATE tables missing in DB
-      for (const model of this.models) {
-        const res = await dropAddTable({
-          client,
-          table: model.table,
-          modelTables,
-          modelColumns: model.columns,
-          messages: tableMessages,
-        });
-        if (res?.created) {
-          createdTables.add(model.table);
-        }
-        if (!res.ok) {
-          await client.query("ROLLBACK");
-          this._migrating = false;
-          return false;
-        }
-      }
-
-      /* ---------- PRINT TABLE-LEVEL LOGS ---------- */
-      const createdTableMsg = tableMessages
-        .filter((m: any) => m.includes("Created TABLE:"))
-        .map((m: any) => m.split("Created TABLE:")[1].trim());
-
-      if (createdTableMsg.length > 0) {
-        console.log(
-          `${colors.section}${colors.bold}MODEL MIGRATION:${colors.reset}`
-        );
-        console.log(
-          `  ${colors.success}Created TABLE:${colors.reset} ${
-            colors.subject
-          }${createdTableMsg.join(", ")}${colors.reset}`
-        );
-        console.log("");
-      }
-
-      for (const model of this.models) {
-        const ok = await model.migrate(client, createdTables);
-        if (!ok) {
-          await client.query("ROLLBACK");
-          this._migrating = false;
-          return false;
-        }
-      }
-
-      /* ---------- JUNCTION TABLES ---------- */
-      const junctions = buildJunctionTables(this.models);
-      const createdJunctions: string[] = [];
-
-      for (const j of junctions) {
-        const exists = await tableExists(client, j.table);
-        if (exists) continue;
-
-        await client.query(j.createSQL);
-        for (const idx of j.indexSQL ?? []) {
-          await client.query(idx);
-        }
-
-        createdJunctions.push(j.table);
-      }
+      /* --------- TABLE MIGRATIONS --------*/
+      await tableMigrations(client, this.models);
 
       /**------LOG OUT MESSAGES */
       if (this._indexSummary?.size) {
@@ -418,16 +285,14 @@ export class Morm {
         console.log("");
       }
 
-      if (createdJunctions.length > 0) {
-        console.log(
-          `${colors.section}${colors.bold}JUNCTION TABLE MIGRATION:${colors.reset}`
-        );
-        console.log(
-          `  ${colors.success}Created:${colors.reset} ${
-            colors.subject
-          }${createdJunctions.join(", ")}${colors.reset}`
-        );
-        console.log("");
+      /* ---------- JUNCTION TABLES ---------- */
+      await renderJunctionBuilder(client, this.models);
+
+      /* ---------- COLUMN MIGRATIONS ---------- */
+      {
+        for (const model of this.models) {
+          await model.migrate(client);
+        }
       }
 
       await client.query("COMMIT");
@@ -449,6 +314,4 @@ export class Morm {
     this._migrating = false;
     return true;
   }
-
-  // async query(){}
 }

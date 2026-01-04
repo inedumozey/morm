@@ -79,8 +79,30 @@ export async function alterColumnUnique(opts: {
     const hasUnique = dbUniques.has(col.name);
     const constraintName = dbUniques.get(col.name);
 
+    /* ===================================================== */
+    /* REBUILD UNIQUE ON RENAME                              */
+    /* ===================================================== */
+
+    if (col.__renamed && hasUnique && constraintName) {
+      await client.query(
+        `ALTER TABLE ${q(table)} DROP CONSTRAINT ${q(constraintName)}`
+      );
+
+      messages.push(
+        `${colors.processing}Rebuilding UNIQUE:${colors.reset} ${colors.subject}${col.name}${colors.reset}`
+      );
+
+      await client.query(`ALTER TABLE ${q(table)} ADD UNIQUE (${q(col.name)})`);
+
+      messages.push(
+        `${colors.success}Rebuilt UNIQUE:${colors.reset} ${colors.subject}${col.name}${colors.reset}`
+      );
+
+      continue;
+    }
+
     /* ---------- NO CHANGE ---------- */
-    if (wantsUnique === hasUnique) continue;
+    if (wantsUnique === hasUnique && !col.__renamed) continue;
 
     /* ===================================================== */
     /* ADD UNIQUE                                            */

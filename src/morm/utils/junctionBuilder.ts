@@ -1,5 +1,7 @@
 // utils/junctionBuilder.ts
 
+import { colors } from "./logColors.js";
+
 type JunctionPlan = {
   table: string;
   createSQL: string;
@@ -21,6 +23,19 @@ function sortedPair(a: string, b: string): [string, string] {
 export function buildJunctionTables(models: any[]): JunctionPlan[] {
   const plans: JunctionPlan[] = [];
   const seen = new Set<string>();
+
+  function getPrimaryKeyType(model: any): string {
+    const pk = model.primaryKey ?? "id";
+    const col = model.columns?.find((c: any) => c.name === pk);
+
+    if (!col || !col.type) {
+      throw new Error(
+        `Cannot resolve primary key type for table "${model.table}"`
+      );
+    }
+
+    return String(col.type).toUpperCase();
+  }
 
   for (const model of models) {
     if (!model?.table) continue;
@@ -57,17 +72,23 @@ export function buildJunctionTables(models: any[]): JunctionPlan[] {
       const pkA = modelA?.primaryKey ?? "id";
       const pkB = modelB?.primaryKey ?? "id";
 
+      const pkTypeA = getPrimaryKeyType(modelA);
+      const pkTypeB = getPrimaryKeyType(modelB);
+
       plans.push({
         table: junction,
         createSQL: `
-CREATE TABLE IF NOT EXISTS "${junction}" (
-  "${colA}" UUID NOT NULL,
-  "${colB}" UUID NOT NULL,
-  PRIMARY KEY ("${colA}", "${colB}"),
- FOREIGN KEY ("${colA}") REFERENCES "${t1Raw}"("${pkA}") ON DELETE CASCADE ON UPDATE CASCADE,
-FOREIGN KEY ("${colB}") REFERENCES "${t2Raw}"("${pkB}") ON DELETE CASCADE ON UPDATE CASCADE
-);
+        CREATE TABLE IF NOT EXISTS "${junction}" (
+          "${colA}" ${pkTypeA} NOT NULL,
+          "${colB}" ${pkTypeB} NOT NULL,
+          PRIMARY KEY ("${colA}", "${colB}"),
+          FOREIGN KEY ("${colA}") REFERENCES "${t1Raw}"("${pkA}")
+            ON DELETE CASCADE ON UPDATE CASCADE,
+          FOREIGN KEY ("${colB}") REFERENCES "${t2Raw}"("${pkB}")
+            ON DELETE CASCADE ON UPDATE CASCADE
+        );
         `.trim(),
+
         indexSQL: [
           `CREATE INDEX IF NOT EXISTS "${junction}_${colA}_idx" ON "${junction}"("${colA}")`,
           `CREATE INDEX IF NOT EXISTS "${junction}_${colB}_idx" ON "${junction}"("${colB}")`,
@@ -77,4 +98,45 @@ FOREIGN KEY ("${colB}") REFERENCES "${t2Raw}"("${pkB}") ON DELETE CASCADE ON UPD
   }
 
   return plans;
+}
+
+async function tableExists(client: any, table: string): Promise<boolean> {
+  const res = await client.query(
+    `
+    SELECT 1
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name = $1
+    `,
+    [table]
+  );
+  return res.rowCount > 0;
+}
+
+export async function renderJunctionBuilder(client: any, models: any) {
+  const junctions = buildJunctionTables(models);
+  const createdJunctions: string[] = [];
+
+  for (const j of junctions) {
+    const exists = await tableExists(client, j.table);
+    if (exists) continue;
+
+    await client.query(j.createSQL);
+    for (const idx of j.indexSQL ?? []) {
+      await client.query(idx);
+    }
+    createdJunctions.push(j.table);
+  }
+
+  if (createdJunctions.length > 0) {
+    console.log(
+      `${colors.section}${colors.bold}JUNCTION TABLE MIGRATION:${colors.reset}`
+    );
+    console.log(
+      `  ${colors.success}Created:${colors.reset} ${
+        colors.subject
+      }${createdJunctions.join(", ")}${colors.reset}`
+    );
+    console.log("");
+  }
 }

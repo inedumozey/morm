@@ -37,7 +37,7 @@ export type AllowedType = AllowedTypeScalar | AllowedTypeArray;
 export interface ColumnReference {
   table: string;
   column: string;
-  relation?: string; // ONE-TO-ONE | ONE-TO-MANY | MANY-TO-MANY
+  relation: string; // ONE-TO-ONE | ONE-TO-MANY | MANY-TO-MANY
   onDelete?: string;
   onUpdate?: string;
 }

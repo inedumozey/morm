@@ -86,10 +86,10 @@ const Profile = morm?.model({
       default: "uuid()",
     },
     {
-      name: "user_id",
+      name: "acount_id",
       type: "uuid",
       references: {
-        table: "users",
+        table: "account",
         column: "id",
         relation: "nn",
         onDelete: "RESTRICT",
@@ -111,18 +111,55 @@ const account = morm?.model({
   ],
 });
 
+const de = morm?.model({
+  table: "denis",
+  columns: [
+    {
+      name: "idx",
+      type: "uuid",
+      primary: true,
+      default: "uuid()",
+    },
+  ],
+});
+
+const moses = morm?.model({
+  table: "m",
+  columns: [
+    {
+      name: "idx",
+      type: "text",
+      primary: true,
+    },
+    {
+      name: "name",
+      type: "text",
+    },
+    {
+      name: "de",
+      type: "uuid[]",
+      references: {
+        table: "denis",
+        column: "idx",
+        relation: "mm",
+      },
+    },
+  ],
+});
+
 const User = morm?.model({
   table: "users",
   columns: [
     { name: "ID", type: "uuid", primary: true, default: "uuid()" },
     { name: "role", type: "USER_ROLE", default: "ADMIN" },
+    { name: "name", type: "text" },
     {
-      name: "referrer_id",
+      name: "account_id",
       type: "uuid",
       references: {
-        table: "users",
+        table: "account",
         column: "id",
-        relation: "nm", // ONE-TO-MANY
+        relation: "nn", // ONE-TO-MANY
         onDelete: "SET NULL",
         onUpdate: "SET DEFAULT",
       },
@@ -190,19 +227,7 @@ const Position = morm?.model({
   sanitize: true, // false
 });
 
-// await morm?.migrate();
-await morm?.migrate({ reset: true });
-
-// Design diffJunctionTables() (step-by-step)
-// Handle junction renames cleanly
-// Handle dropping removed MM relations safely
-// Move to query/runtime layer
-
-/**
- * Remaining tasks:
- * default
- * foreign keys
- * junction tables
- */
+await morm?.migrate();
+// await morm?.migrate({ reset: true });
 
 app.listen(4000, () => console.log("Server running on port 4000"));
