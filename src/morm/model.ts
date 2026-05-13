@@ -18,6 +18,7 @@ export function createModelRuntime(
     table: string;
     columns: readonly ColumnDefinition[];
     indexes?: readonly IndexDefinition[] | undefined;
+    primaryKey?: string[];
     sanitize?: boolean | "strict";
   },
 ) {
@@ -92,7 +93,9 @@ export function createModelRuntime(
       });
     }
 
-    c.__primary = !!c.primary;
+    c.__primary = !!c.primary || (config.primaryKey?.includes(c.name) ?? false);
+    c.__compositePk = config.primaryKey?.includes(c.name) ?? false;
+
     const { isArray, base } = parseTypeInfo(String(c.type));
     c.__isArray = isArray;
     c.__arrayInner = isArray ? base : null;
@@ -179,8 +182,25 @@ export function createModelRuntime(
   const hasPrimaryKey = processed.some((c) => c.__primary);
   if (!hasPrimaryKey) {
     validationMessages.push(
-      `Table "${config.table}" has no PRIMARY KEY — every table must have exactly one column with primary: true`,
+      `Table "${config.table}" has no PRIMARY KEY — add primary: true to a column or use primaryKey: ["col1", "col2"] for composite keys`,
     );
+  }
+
+  /* VALIDATE COMPOSITE PRIMARY KEY ------------------------------------------------ */
+  if (config.primaryKey && config.primaryKey.length > 0) {
+    if (config.primaryKey.length === 1) {
+      validationMessages.push(
+        `Table "${config.table}" — primaryKey with a single column is not allowed, use primary: true on the column instead`,
+      );
+    }
+    const columnNameSet = new Set(processed.map((c) => c.name));
+    for (const pk of config.primaryKey) {
+      if (!columnNameSet.has(pk)) {
+        validationMessages.push(
+          `Table "${config.table}" — primaryKey references "${pk}" which does not exist in columns`,
+        );
+      }
+    }
   }
 
   /* VALIDATION FAILED ----------------------------------------------------------- */
@@ -210,9 +230,13 @@ export function createModelRuntime(
     .filter(Boolean)
     .join(", ");
 
+  const compositePkSQL = config.primaryKey?.length
+    ? `, PRIMARY KEY (${config.primaryKey.map((k) => `"${k}"`).join(", ")})`
+    : "";
+
   const createTableSQL = `
     CREATE TABLE IF NOT EXISTS "${config.table}" (
-      ${columnsSQL}
+      ${columnsSQL}${compositePkSQL}
     );
   `;
 
@@ -252,7 +276,9 @@ export function createModelRuntime(
     return out;
   }
 
-  const primaryKey = processed.find((c) => c.__primary)?.name ?? "id";
+  const primaryKey: string | string[] = config.primaryKey?.length
+    ? config.primaryKey
+    : (processed.find((c) => c.__primary)?.name ?? "id");
 
   return {
     table: config.table,
@@ -267,7 +293,14 @@ export function createModelRuntime(
       if (createdTables?.has(config.table)) return true;
 
       try {
-        const ok = await diffTable(client, { table: config.table }, processed);
+        const ok = await diffTable(
+          client,
+          {
+            table: config.table,
+            ...(config.primaryKey && { primaryKey: config.primaryKey }),
+          },
+          processed,
+        );
         if (!ok) return false;
 
         await ensureUpdatedAtTrigger(client);

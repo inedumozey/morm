@@ -62,6 +62,8 @@ export function buildJunctionTables(models: any[]): JunctionPlan[] {
           CREATE TABLE IF NOT EXISTS "${junction}" (
             "${colA}" ${pkTypeA} NOT NULL,
             "${colB}" ${pkTypeB} NOT NULL,
+            "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY ("${colA}", "${colB}"),
             FOREIGN KEY ("${colA}") REFERENCES "${t1Raw}"("${pkA}") ON DELETE CASCADE ON UPDATE CASCADE,
             FOREIGN KEY ("${colB}") REFERENCES "${t2Raw}"("${pkB}") ON DELETE CASCADE ON UPDATE CASCADE
@@ -115,11 +117,27 @@ export async function renderJunctionBuilder(client: any, models: any) {
     if (exists) continue;
     await client.query(j.createSQL);
     for (const idx of j.indexSQL ?? []) await client.query(idx);
+
+    /* Attach updated_at trigger */
+    const trig = `morm_trigger_${j.table}_updated_at`;
+    const chk = await client.query(
+      `SELECT 1 FROM pg_trigger WHERE tgname = $1`,
+      [trig],
+    );
+    if (chk.rowCount === 0) {
+      await client.query(`
+        CREATE TRIGGER ${trig}
+        BEFORE UPDATE ON "${j.table}"
+        FOR EACH ROW
+        EXECUTE FUNCTION morm_set_updated_at();
+      `);
+    }
+
     created.push(j.table);
   }
 
   if (created.length > 0)
     reporter.addJunction({ kind: "created", names: created });
   if (dropped.length > 0)
-    reporter.addTable({ kind: "dropped", names: dropped });
+    reporter.addJunction({ kind: "dropped", names: dropped });
 }

@@ -74,123 +74,28 @@ morm?.enums([
   { name: "USER_ROLE", values: ["ADMIN", "SUPERADMIN", "STAFF", "MARKED"] },
 ]);
 
-// const Profile = morm?.model({
-//   table: "profile",
-//   columns: [
-//     {
-//       name: "id",
-//       type: "uuid",
-//       primary: true,
-//       default: "uuid()",
-//     },
-//     {
-//       name: "acount_id",
-//       type: "uuid",
-//       references: {
-//         table: "account",
-//         column: "id",
-//         relation: "nn",
-//         onDelete: "RESTRICT",
-//         onUpdate: "NO ACTION",
-//       },
-//     },
-//   ],
-// });
-
-// const account = morm?.model({
-//   table: "account",
-//   columns: [
-//     {
-//       name: "id",
-//       type: "UUID",
-//       primary: true,
-//       default: "uuid()",
-//     },
-//   ],
-// });
-
-// const User = morm?.model({
-//   table: "principal",
-//   columns: [
-//     { name: "ID", type: "uuid", primary: true, default: "uuid()" },
-//     { name: "role", type: "USER_ROLE", default: "ADMIN" },
-//     { name: "name", type: "text" },
-//     {
-//       name: "account_id",
-//       type: "uuid",
-//       references: {
-//         table: "account",
-//         column: "id",
-//         relation: "nn", // ONE-TO-MANY
-//         onDelete: "SET NULL",
-//         onUpdate: "SET DEFAULT",
-//       },
-//     },
-//     {
-//       name: "referrer_ids",
-//       type: "uuid[]",
-//       references: {
-//         table: "principal",
-//         column: "id",
-//         relation: "mm", // MANY-TO-MANY
-//       },
-//     },
-//     {
-//       name: "position_id",
-//       type: "UUID[]",
-//       references: {
-//         table: "position",
-//         column: "id",
-//         relation: "mm", // MANY-TO-MANY
-//       },
-//     },
-//   ],
-// });
-
-// const Profile = morm!.model({
-//   table: "profile",
-//   columns: [
-//     { name: "id", type: "uuid", primary: true, default: "uuid()" },
-//     {
-//       name: "user_id",
-//       type: "uuid",
-//       // unique: true,
-//       // notNull: true,
-//       // default: "uuid()",
-//       references: {
-//         table: "users",
-//         column: "id",
-//         relation: "nn",
-//         onDelete: "RESTRICT",
-//         onUpdate: "CASCADE",
-//       },
-//     },
-//   ],
-// });
-
-// const Book = morm!.model({
-//   table: "book",
-//   columns: [
-//     { name: "id", type: "uuid", primary: true, default: "uuid()" },
-//     {
-//       name: "author_id",
-//       type: "uuid",
-//       // unique: true,
-//       // notNull: true,
-//       references: {
-//         table: "users",
-//         column: "id",
-//         relation: "nm",
-//         onDelete: "RESTRICT",
-//         onUpdate: "CASCADE",
-//       },
-//     },
-//   ],
-// });
+const CountryLanguage = morm!.model({
+  table: "country_language",
+  primaryKey: ["country_codes", "currency_cod", "language_code"],
+  columns: [
+    { name: "country_codes", type: "text" },
+    { name: "language_code", type: "text" },
+    { name: "currency_cod", type: "text" },
+    { name: "is_official", type: "boolean", default: false },
+  ],
+});
 
 const Post = morm!.model({
   table: "post",
-  columns: [{ name: "id", type: "uuid", primary: true, default: "uuid()" }],
+  columns: [
+    { name: "id", type: "uuid", primary: true, default: "uuid()" },
+    { name: "title", type: "text" },
+    {
+      name: "tag_ids",
+      type: "uuid[]",
+      references: { table: "tag", column: "id", relation: "mm" },
+    },
+  ],
 });
 
 const Tag = morm!.model({
@@ -198,32 +103,6 @@ const Tag = morm!.model({
   columns: [
     { name: "id", type: "uuid", primary: true, default: "uuid()" },
     { name: "name", type: "text" },
-    {
-      name: "post_ids",
-      type: "uuid[]",
-      references: {
-        table: "post",
-        column: "id",
-        relation: "mm",
-      },
-    },
-  ],
-});
-
-const User = morm!.model({
-  table: "users",
-  columns: [
-    { name: "id", type: "uuid", primary: true, default: "uuid()" },
-    { name: "name", type: "text", default: "mos" },
-    {
-      name: "follower",
-      type: "uuid[]",
-      references: {
-        table: "users",
-        column: "id",
-        relation: "mm",
-      },
-    },
   ],
 });
 

@@ -13,7 +13,11 @@ type DbColumn = {
   data_type: string;
   udt_name: string;
   column_default: string | null;
+  character_maximum_length: number | null;
+  numeric_precision: number | null;
+  numeric_scale: number | null;
 };
+
 type Counts = { total: number };
 
 function q(n: string) {
@@ -27,7 +31,24 @@ function canonicalDbType(row: DbColumn): string {
   if (dt === "timestamp with time zone") return "TIMESTAMPTZ";
   if (dt === "timestamp without time zone") return "TIMESTAMP";
   if (dt === "user-defined") return canonicalType(row.udt_name);
-  return canonicalType(row.data_type);
+
+  const base = canonicalType(row.data_type);
+
+  if (
+    (base === "VARCHAR" || base === "CHAR") &&
+    row.character_maximum_length != null
+  ) {
+    return `${base}(${row.character_maximum_length})`;
+  }
+
+  if (base === "NUMERIC" && row.numeric_precision != null) {
+    if (row.numeric_scale != null && row.numeric_scale > 0) {
+      return `${base}(${row.numeric_precision},${row.numeric_scale})`;
+    }
+    return `${base}(${row.numeric_precision})`;
+  }
+
+  return base;
 }
 
 function isArr(t: string) {

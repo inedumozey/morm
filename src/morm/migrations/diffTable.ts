@@ -17,6 +17,9 @@ type Row = {
   is_nullable: string;
   column_default: string | null;
   is_identity: string;
+  character_maximum_length: number | null;
+  numeric_precision: number | null;
+  numeric_scale: number | null;
 };
 
 function q(n: string) {
@@ -41,12 +44,13 @@ async function batchCounts(client: any, table: string, cols: string[]) {
 
 export async function diffTable(
   client: any,
-  config: { table: string },
+  config: { table: string; primaryKey?: string[] },
   processed: any[],
 ): Promise<boolean> {
   const res = await client.query(
     `
-    SELECT column_name, data_type, udt_name, is_nullable, column_default, is_identity
+    SELECT column_name, data_type, udt_name, is_nullable, column_default, is_identity,
+           character_maximum_length, numeric_precision, numeric_scale
     FROM information_schema.columns
     WHERE table_schema = 'public'
       AND LOWER(table_name) = LOWER($1)
@@ -103,6 +107,7 @@ export async function diffTable(
     counts,
     dbIdentityNames,
     modelIdentityNames,
+    ...(config.primaryKey && { compositePk: config.primaryKey }),
   });
   if (!pk.ok) return false;
 

@@ -170,6 +170,7 @@ export class Morm {
     columns: ColumnDefinition[];
     indexes?: readonly IndexDefinition[];
     sanitize?: boolean | "strict";
+    primaryKey?: string[]; // composite key
   }) {
     const normalizedColumns = config.columns.map((col) => {
       const out: any = { ...col };
@@ -187,6 +188,7 @@ export class Morm {
     const normalizedConfig = {
       ...config,
       table: config.table.toLowerCase(),
+      primaryKey: config.primaryKey?.map((k) => k.toLowerCase()),
     };
 
     const mdl = createModelRuntime(this, {

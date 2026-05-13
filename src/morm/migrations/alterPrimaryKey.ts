@@ -35,6 +35,7 @@ export async function alterPrimaryKey(opts: {
   counts: Counts | null;
   dbIdentityNames?: Set<string>;
   modelIdentityNames?: Set<string>;
+  compositePk?: string[];
 }): Promise<{ ok: boolean }> {
   const {
     client,
@@ -43,14 +44,66 @@ export async function alterPrimaryKey(opts: {
     counts,
     dbIdentityNames = new Set(),
     modelIdentityNames = new Set(),
+    compositePk,
   } = opts;
 
   const tableHasData = (counts?.total ?? 0) > 0;
   const dbPK = await getPrimaryKey(client, table);
   const modelPKs = processed.filter((c) => c.__primary);
 
-  /* Multiple PKs in model */
-  if (modelPKs.length > 1) {
+  /* Composite PK — verify it matches the DB */
+  if (compositePk && compositePk.length > 0) {
+    const dbPK = await getPrimaryKey(client, table);
+    if (dbPK) {
+      const dbPkRes = await client.query(
+        `
+        SELECT a.attname
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_attribute a ON a.attrelid = t.oid
+        JOIN unnest(c.conkey) WITH ORDINALITY AS cols(attnum, ord) ON cols.attnum = a.attnum
+        WHERE c.contype = 'p' AND t.relname = $1
+        ORDER BY cols.ord
+        `,
+        [table],
+      );
+      const dbPkCols = dbPkRes.rows.map((r: any) => r.attname);
+      const modelPkSorted = [...compositePk].sort();
+      const dbPkSorted = [...dbPkCols].sort();
+      const same =
+        modelPkSorted.length === dbPkSorted.length &&
+        modelPkSorted.every((v, i) => v === dbPkSorted[i]);
+
+      if (!same) {
+        if (tableHasData) {
+          reporter.addError({
+            section: "PK",
+            table,
+            message: `Cannot change composite PRIMARY KEY from (${dbPkCols.join(", ")}) to (${compositePk.join(", ")}) — table has data. Run migrate({ reset: true })`,
+          });
+          return { ok: false };
+        }
+
+        /* No data — drop and recreate the PK constraint */
+        await client.query(
+          `ALTER TABLE ${q(table)} DROP CONSTRAINT ${q(dbPK.name)}`,
+        );
+        await client.query(
+          `ALTER TABLE ${q(table)} ADD PRIMARY KEY (${compositePk.map((k) => q(k)).join(", ")})`,
+        );
+        reporter.addColumn({
+          kind: "pk",
+          table,
+          added: compositePk,
+          dropped: dbPkCols,
+        });
+      }
+    }
+    return { ok: true };
+  }
+
+  /* Multiple PKs in model — only error if not a composite PK */
+  if (modelPKs.length > 1 && (!compositePk || compositePk.length === 0)) {
     reporter.addError({
       section: "COLUMN",
       table,

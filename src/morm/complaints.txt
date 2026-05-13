@@ -1,28 +1,18 @@
-when table is created at first, indexes are not created, but when i save again even though the data has not been updated, then indexes are created
+✅ Composite Primary Key
 
-i created a table, const Pri = morm?.model({
-  table: "pri",
-  columns: [
-    {
-      name: "id",
-      type: "int",
-      primary: true,
-      default: "int()",
-      notNull: false,
-      unique: true,
-    },
-  ],
-  indexes: ["id", "name"],
-  sanitize: true, // false
-});, was successful, but on saving again when when the data were not change, then i saw error message: 
-  ╔══════════════════════════╗
-  ║  MORM  ·  MIGRATION    ║
-  ╚══════════════════════════╝
 
-  COLUMNS  ›  pri
-  └─ Dropped      id
+Many-to-Many Pending
 
-  ERROR  ›  pri
-  └─ MIGRATION    Invalid index on "pri": column "id" does not exist
+Junction table diffing — when relation changes, drop and recreate junction
+onDelete/onUpdate configurable on junction FK columns
+Dropped junctions reported under JUNCTIONS not TABLES in reporter
 
-  ✗  Completed with errors  ·  1 table  ·  1 change  ·  1 error
+Previously identified fixes not yet done
+
+Fix 3 from early analysis — duplicate loop in indexMigrations.ts
+Fix 5 — identity events not emitted correctly in alterColumnTypes.ts and alterColumnDefault.ts
+Fix 7 — mixed callback/promise in morm.ts init
+
+Reporter
+
+FK event type in migrationReporter.ts — added, dropped, rebuilt fields update

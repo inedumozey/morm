@@ -127,6 +127,7 @@ export function buildColumnSQL(
   col: ColumnDefinition & {
     name: string;
     __primary?: boolean;
+    __compositePk?: boolean;
     __identity?: boolean;
     __isEnumType?: boolean;
     __virtual?: boolean;
@@ -168,7 +169,7 @@ export function buildColumnSQL(
     }
   }
   // if col is primary key, ignore notNull and unique settings otherwise, allow both to be set
-  if (col.__primary) {
+  if (col.__primary && !col.__compositePk) {
     parts.push("PRIMARY KEY");
   } else {
     if (col.notNull) parts.push("NOT NULL");
