@@ -1,5 +1,7 @@
 // sql/buildDefaultSQL.ts
 
+import { canonicalType, stripTypeModifier } from "../utils/canonicalType.js";
+
 export function buildDefaultSQL(col: {
   type: string;
   default: any;
@@ -7,7 +9,9 @@ export function buildDefaultSQL(col: {
   if (col.default === undefined) return null;
 
   const def = col.default;
-  const typeUpper = String(col.type).trim().toUpperCase();
+
+  // Strip modifier and canonicalize — "VARCHAR(255)" → "VARCHAR", "numeric(10,2)" → "NUMERIC"
+  const typeUpper = canonicalType(stripTypeModifier(String(col.type).trim()));
 
   /* =====================================================
    * IDENTITY HELPERS (NOT DEFAULTS)
@@ -17,27 +21,21 @@ export function buildDefaultSQL(col: {
 
     if (d === "int()") {
       if (typeUpper !== "INT" && typeUpper !== "INTEGER") {
-        throw new Error(
-          `int() identity can only be used with INT/INTEGER column type`
-        );
+        return null; // int() identity only supported for INT/INTEGER, but not an error if used with other types (handled elsewhere)
       }
       return null; // identity handled elsewhere
     }
 
     if (d === "smallint()") {
       if (typeUpper !== "SMALLINT") {
-        throw new Error(
-          `smallint() identity can only be used with SMALLINT column type`
-        );
+        return null; // smallint() identity only supported for SMALLINT, but not an error if used with other types (handled elsewhere)
       }
       return null;
     }
 
     if (d === "bigint()") {
       if (typeUpper !== "BIGINT") {
-        throw new Error(
-          `bigint() identity can only be used with BIGINT column type`
-        );
+        return null; // bigint() identity only supported for BIGINT, but not an error if used with other types (handled elsewhere)
       }
       return null;
     }
@@ -71,9 +69,7 @@ export function buildDefaultSQL(col: {
         return "CURRENT_TIMESTAMP";
 
       default:
-        throw new Error(
-          `now() default is not valid for column type ${typeUpper}`
-        );
+        return null;
     }
   }
 
@@ -81,10 +77,19 @@ export function buildDefaultSQL(col: {
    * ARRAYS
    * ===================================================== */
   if (Array.isArray(def)) {
+    if (typeUpper === "JSON" || typeUpper === "JSONB") {
+      // Plain JSON/JSONB — serialize as JSON string
+      return `'${JSON.stringify(def).replace(/'/g, "''")}'`;
+    }
+    if (typeUpper === "JSON[]" || typeUpper === "JSONB[]") {
+      // Array of JSON/JSONB — only empty array supported as default
+      if (def.length === 0) return "'{}'";
+      return null; // non-empty array defaults not supported for JSON[]/JSONB[]
+    }
     const items = def.map((v) =>
       typeof v === "number" || typeof v === "boolean"
         ? String(v)
-        : `"${String(v).replace(/"/g, '\\"')}"`
+        : `"${String(v).replace(/"/g, '\\"')}"`,
     );
     return `'{${items.join(",")}}'`;
   }
@@ -97,6 +102,20 @@ export function buildDefaultSQL(col: {
   }
 
   if (typeof def === "string") {
+    // Integer / numeric string defaults — pass as unquoted numeric literal
+    // e.g. "42" → DEFAULT 42, "9223372036854775807" → DEFAULT 9223372036854775807
+    const INTEGER_TYPES = new Set([
+      "SMALLINT",
+      "INTEGER",
+      "BIGINT",
+      "NUMERIC",
+      "DECIMAL",
+    ]);
+    if (INTEGER_TYPES.has(typeUpper) && /^-?\d+(\.\d+)?$/.test(def.trim())) {
+      return def.trim();
+    }
+
+    // All other string defaults — quoted literal
     return `'${def.replace(/'/g, "''")}'`;
   }
 

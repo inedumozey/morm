@@ -1,0 +1,20 @@
+Migration tests remaining:
+
+✅ Primary key
+✅ Type changes + identity
+✅ Defaults
+✅ Column naming
+✅ Duplicate column names
+✅ Column rename
+✅ NOT NULL add/remove
+✅ UNIQUE add/remove
+✅ Identity protection
+✅ Indexes — single, composite, partial, WHERE update
+✅ Enums
+✅ CHECK constraints — add, update, remove
+✅ Table rename — similarity detection
+✅ Multiple tables — topo-sort, circular reference
+✅ ONE-TO-ONE (nn)
+✅ ONE-TO-MANY (nm)
+MANY-TO-MANY (mm) + junction tables
+Circular reference detection

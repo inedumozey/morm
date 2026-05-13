@@ -1,7 +1,5 @@
 // utils/relationValidator.ts
 
-import { colors } from "./logColors.js";
-
 export type NormalizedRel =
   | "ONE-TO-ONE"
   | "ONE-TO-MANY"
@@ -59,7 +57,6 @@ export function normalizeRelation(input: string | undefined): NormalizedRel {
   return null;
 }
 
-/** Extract base type + array info */
 function parseType(type: any) {
   const s = String(type ?? "").trim();
   const upper = s.toUpperCase();
@@ -68,7 +65,6 @@ function parseType(type: any) {
   return { raw: s, upper, base, isArray };
 }
 
-/** Allowed FK actions */
 const VALID_FK_ACTIONS = new Set([
   "CASCADE",
   "SET NULL",
@@ -77,10 +73,19 @@ const VALID_FK_ACTIONS = new Set([
   "NO ACTION",
 ]);
 
-/** Validate relations + topo-sort models */
-export function validateAndSortModels(models: any[]) {
-  const errors: string[] = [];
-  const infos: string[] = [];
+/* ===================================================== */
+/* VALIDATE + TOPO-SORT                                  */
+/* Each error is a plain { table?, message } object so  */
+/* morm.ts can pass it cleanly to reporter.addError().  */
+/* ===================================================== */
+
+export type RelationError = { table?: string; message: string };
+
+export function validateAndSortModels(models: any[]): {
+  errors: RelationError[] | null;
+  sorted: any[] | null;
+} {
+  const errors: RelationError[] = [];
 
   for (const m of models) {
     m._relations = { incoming: [], outgoing: [] };
@@ -111,57 +116,51 @@ export function validateAndSortModels(models: any[]) {
       const ref = col.references;
 
       if (!ref.table || !ref.column) {
-        errors.push(`${colors.subject}${table}${colors.reset}`);
-        errors.push(
-          `  ${colors.error}Invalid reference: ${colors.reset} ${colors.subject}${table}.${col.name} missing target${colors.reset}`
-        );
+        errors.push({
+          table,
+          message: `${table}.${col.name} — missing reference target`,
+        });
         continue;
       }
 
       const refTable = String(ref.table);
       const refTableLower = refTable.toLowerCase();
-
       const targetModel = modelByLower.get(refTableLower);
+
       if (!targetModel) {
-        errors.push(` ${colors.subject}${table}${colors.reset}`);
-        errors.push(
-          `  ${colors.error}Missing table: ${colors.subject}${refTable} does not exist${colors.reset}`
-        );
+        errors.push({ table, message: `"${refTable}" does not exist` });
         continue;
       }
 
       const refCol = String(ref.column);
       const targetCol = (targetModel.columns ?? []).find(
-        (c: any) => String(c.name) === refCol
+        (c: any) => String(c.name) === refCol,
       );
+
       if (!targetCol) {
-        errors.push(` ${colors.subject}${table}${colors.reset}`);
-        errors.push(
-          `  ${colors.error}Missing column:${colors.reset} ${colors.subject}${refTable}.${refCol}${colors.reset}`
-        );
+        errors.push({
+          table,
+          message: `Column "${refTable}.${refCol}" does not exist`,
+        });
         continue;
       }
 
       const relation = normalizeRelation(ref.relation);
 
       if (!relation) {
-        errors.push(` ${colors.subject}${table}${colors.reset}`);
-        errors.push(
-          `  ${colors.error}Invalid relation:${colors.reset} ${colors.subject}${table}.${col.name}${colors.reset}`
-        );
+        errors.push({
+          table,
+          message: `${table}.${col.name} — invalid relation "${ref.relation}"`,
+        });
         continue;
       }
 
-      // ONE-TO-ONE MUST ALWAYS BE UNIQUE
-      if (relation == "ONE-TO-ONE") {
-        // log error if the column contains unique:true
-        if (String(col.unique) == "false") {
-          errors.push(` ${colors.subject}${table}${colors.reset}`);
-          errors.push(
-            `  ${colors.error}Invalid constraint:${colors.reset} ${colors.subject}${table}.${col.name} has a ONE-TO-ONE relation and must always be unique ${colors.reset}`
-          );
-          continue;
-        }
+      if (relation === "ONE-TO-ONE" && String(col.unique) === "false") {
+        errors.push({
+          table,
+          message: `${table}.${col.name} — ONE-TO-ONE relation must always be UNIQUE`,
+        });
+        continue;
       }
 
       const onDelete = ref.onDelete
@@ -172,16 +171,16 @@ export function validateAndSortModels(models: any[]) {
         : "CASCADE";
 
       if (!VALID_FK_ACTIONS.has(onDelete)) {
-        errors.push(` ${colors.subject}${table}${colors.reset}`);
-        errors.push(
-          `  ${colors.error}Invalid onDelete:${colors.reset} ${colors.subject}${table}.${col.name}${colors.reset}`
-        );
+        errors.push({
+          table,
+          message: `${table}.${col.name} — invalid onDelete "${onDelete}"`,
+        });
       }
       if (!VALID_FK_ACTIONS.has(onUpdate)) {
-        errors.push(` ${colors.subject}${table}${colors.reset}`);
-        errors.push(
-          `  ${colors.error}Invalid onUpdate:${colors.reset} ${colors.subject}${table}.${col.name}${colors.reset}`
-        );
+        errors.push({
+          table,
+          message: `${table}.${col.name} — invalid onUpdate "${onUpdate}"`,
+        });
       }
 
       ref.onDelete = onDelete;
@@ -190,45 +189,43 @@ export function validateAndSortModels(models: any[]) {
       const left = parseType(col.type);
       const right = parseType(targetCol.type);
 
-      // ONE-TO-ONE AND ONE-TO-MANY DOES NOT REQUIRE ARRAY TYPE
-      if (relation == "ONE-TO-MANY" || relation == "ONE-TO-ONE") {
-        if (left.isArray) {
-          errors.push(` ${colors.subject}${table}${colors.reset}`);
-          errors.push(
-            `  ${colors.error}Invalid ${relation}:${colors.reset} ${colors.subject}${table}.${col.name} does not require array type${colors.reset}`
-          );
-          continue;
-        }
-      }
-
-      if (left.base !== right.base) {
-        errors.push(` ${colors.subject}${table}${colors.reset}`);
-        errors.push(
-          `  ${colors.error}Type mismatch:${colors.reset} ${colors.subject}${table}.${col.name}:${left.base} → ${colors.subject}${refTable}.${refCol}:${right.base}${colors.reset}`
-        );
+      if (
+        (relation === "ONE-TO-MANY" || relation === "ONE-TO-ONE") &&
+        left.isArray
+      ) {
+        errors.push({
+          table,
+          message: `${table}.${col.name} — ${relation} does not use array type`,
+        });
         continue;
       }
 
-      // MANY-TO-MANY RELATION TYPE MUST BE ARRAY, THE REST MUST NOT BE ARRAY
+      if (left.base !== right.base) {
+        errors.push({
+          table,
+          message: `${table}.${col.name} type mismatch: ${left.base} → ${refTable}.${refCol}: ${right.base}`,
+        });
+        continue;
+      }
+
       if (relation === "MANY-TO-MANY") {
         if (!left.isArray) {
-          errors.push(` ${colors.subject}${table}${colors.reset}`);
-          errors.push(
-            `  ${colors.error}Invalid MANY-TO-MANY:${colors.reset} ${colors.subject}${table}.${col.name} requires array type${colors.reset}`
-          );
+          errors.push({
+            table,
+            message: `${table}.${col.name} — MANY-TO-MANY requires array type`,
+          });
           continue;
         }
 
-        // duplicated column name protection (your current bug)
         const sameName = model.columns.filter(
           (c: any) =>
-            String(c.name).toLowerCase() === String(col.name).toLowerCase()
+            String(c.name).toLowerCase() === String(col.name).toLowerCase(),
         );
-
         if (sameName.length > 1) {
-          errors.push(
-            `${colors.error}Duplicate column:${colors.reset} ${colors.subject}${table}.${col.name}${colors.reset} cannot be declared multiple times`
-          );
+          errors.push({
+            table,
+            message: `${table}.${col.name} — column declared multiple times`,
+          });
           continue;
         }
 
@@ -240,8 +237,6 @@ export function validateAndSortModels(models: any[]) {
         nodes.add(refTableLower);
       }
 
-      // RECORD RELATION METADATA
-      // record outgoing
       model._relations.outgoing.push({
         relation,
         fromTable: table,
@@ -250,7 +245,6 @@ export function validateAndSortModels(models: any[]) {
         isSelf: tableLower === refTableLower,
       });
 
-      // record incoming
       targetModel._relations.incoming.push({
         relation,
         fromTable: table,
@@ -261,13 +255,13 @@ export function validateAndSortModels(models: any[]) {
     }
   }
 
-  if (errors.length > 0) return { errors, infos, sorted: null };
+  if (errors.length > 0) return { errors, sorted: null };
 
   /* ---------- TOPO SORT ---------- */
   const inDegree = new Map<string, number>();
   for (const n of nodes) inDegree.set(n, 0);
 
-  for (const [u, outs] of graph.entries()) {
+  for (const [, outs] of graph.entries()) {
     for (const v of outs) {
       inDegree.set(v, (inDegree.get(v) ?? 0) + 1);
     }
@@ -287,15 +281,15 @@ export function validateAndSortModels(models: any[]) {
   }
 
   if (order.length !== nodes.size) {
-    errors.push(
-      `  ${colors.error}Cyclic relations: ${colors.reset} ${colors.subject}cannot resolve migration order${colors.reset}`
-    );
-    return { errors, infos, sorted: null };
+    errors.push({
+      message: "Cyclic relations — cannot resolve migration order",
+    });
+    return { errors, sorted: null };
   }
 
   const sorted = order
     .map((t) => models.find((m) => String(m.table).toLowerCase() === t))
     .filter(Boolean);
 
-  return { errors, infos, sorted };
+  return { errors: null, sorted };
 }

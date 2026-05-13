@@ -1,6 +1,13 @@
 // model-types.ts
 
-/** Allowed SQL types (case-insensitive via runtime, TS uses uppercase) */
+export type { IndexDefinition } from "./migrations/indexMigrations.js";
+
+/**
+ * Allowed SQL scalar types.
+ * Parameterized types like VARCHAR(255), CHAR(10), NUMERIC(10,2)
+ * are accepted as plain strings at runtime — TypeScript cannot
+ * enforce the numeric parameter, so users pass them as `string`.
+ */
 export type AllowedTypeScalar =
   | "TEXT"
   | "INT"
@@ -9,12 +16,21 @@ export type AllowedTypeScalar =
   | "SMALLINT"
   | "UUID"
   | "BOOLEAN"
+  | "JSON"
   | "JSONB"
   | "TIMESTAMP"
+  | "TIMESTAMPTZ"
   | "DATE"
   | "TIME"
+  | "TIMETZ"
   | "NUMERIC"
-  | "DECIMAL";
+  | "DECIMAL"
+  | "REAL"
+  | "FLOAT8"
+  | "VARCHAR"
+  | "CHAR"
+  | "BYTEA"
+  | (string & {}); // allows VARCHAR(255), NUMERIC(10,2), CHAR(1), enums etc.
 
 export type AllowedTypeArray =
   | "TEXT[]"
@@ -24,16 +40,25 @@ export type AllowedTypeArray =
   | "SMALLINT[]"
   | "UUID[]"
   | "BOOLEAN[]"
+  | "JSON[]"
   | "JSONB[]"
   | "TIMESTAMP[]"
+  | "TIMESTAMPTZ[]"
   | "DATE[]"
   | "TIME[]"
+  | "TIMETZ[]"
   | "NUMERIC[]"
-  | "DECIMAL[]";
+  | "DECIMAL[]"
+  | "REAL[]"
+  | "FLOAT8[]"
+  | "VARCHAR[]"
+  | "CHAR[]"
+  | "BYTEA[]"
+  | (string & {}); // allows enum arrays
 
 export type AllowedType = AllowedTypeScalar | AllowedTypeArray;
 
-/** Column definitions used by models at runtime */
+/** Column reference definition */
 export interface ColumnReference {
   table: string;
   column: string;
@@ -42,14 +67,15 @@ export interface ColumnReference {
   onUpdate?: string;
 }
 
+/** Column definition */
 export interface ColumnDefinition {
-  name: string | (() => string); // done
-  type: string | (() => string); // done
+  name: string | (() => string);
+  type: string | (() => string);
   primary?: boolean | (() => boolean);
-  unique?: boolean | (() => boolean); // done
-  notNull?: boolean | (() => boolean); // done
+  unique?: boolean | (() => boolean);
+  notNull?: boolean | (() => boolean);
   default?: any | (() => any);
-  check?: string | (() => string); // done
+  check?: string | (() => string);
   references?: ColumnReference | null;
-  sanitize?: boolean | "strict" | (() => boolean | "strict"); // done
+  sanitize?: boolean | "strict" | (() => boolean | "strict");
 }

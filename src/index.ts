@@ -30,7 +30,6 @@ app.post("/", async (req, res) => {
  * model-types.ts
  * sql/buildColumnSQL.ts
  * utils/canonicalType.ts
- * utils/logColors.ts
  * utils/relationValidator.ts
  * utils/junctionBuilder.ts
  * utils/validateColumnType.ts
@@ -61,7 +60,7 @@ const db = async (db_name: string) => {
       } else {
         console.log("Database connected");
       }
-    }
+    },
   );
   return morm;
 };
@@ -72,159 +71,130 @@ await morm?.transaction(async (tx) => {
 });
 
 morm?.enums([
-  { name: "USER_ROLE", values: ["ADMIN", "SUPERADMIN", "STUDENT"] },
-  { name: "SCHOOL", values: ["STUDENT", "TEACHER"] },
+  { name: "USER_ROLE", values: ["ADMIN", "SUPERADMIN", "STAFF", "MARKED"] },
 ]);
 
-const Profile = morm?.model({
-  table: "profile",
-  columns: [
-    {
-      name: "id",
-      type: "uuid",
-      primary: true,
-      default: "uuid()",
-    },
-    {
-      name: "acount_id",
-      type: "uuid",
-      references: {
-        table: "account",
-        column: "id",
-        relation: "nn",
-        onDelete: "RESTRICT",
-        onUpdate: "NO ACTION",
-      },
-    },
-  ],
-});
+// const Profile = morm?.model({
+//   table: "profile",
+//   columns: [
+//     {
+//       name: "id",
+//       type: "uuid",
+//       primary: true,
+//       default: "uuid()",
+//     },
+//     {
+//       name: "acount_id",
+//       type: "uuid",
+//       references: {
+//         table: "account",
+//         column: "id",
+//         relation: "nn",
+//         onDelete: "RESTRICT",
+//         onUpdate: "NO ACTION",
+//       },
+//     },
+//   ],
+// });
 
-const account = morm?.model({
-  table: "account",
-  columns: [
-    {
-      name: "id",
-      type: "UUID",
-      primary: true,
-      default: "uuid()",
-    },
-  ],
-});
+// const account = morm?.model({
+//   table: "account",
+//   columns: [
+//     {
+//       name: "id",
+//       type: "UUID",
+//       primary: true,
+//       default: "uuid()",
+//     },
+//   ],
+// });
 
-const de = morm?.model({
-  table: "denis",
-  columns: [
-    {
-      name: "idx",
-      type: "uuid",
-      primary: true,
-      default: "uuid()",
-    },
-  ],
-});
+// const User = morm?.model({
+//   table: "principal",
+//   columns: [
+//     { name: "ID", type: "uuid", primary: true, default: "uuid()" },
+//     { name: "role", type: "USER_ROLE", default: "ADMIN" },
+//     { name: "name", type: "text" },
+//     {
+//       name: "account_id",
+//       type: "uuid",
+//       references: {
+//         table: "account",
+//         column: "id",
+//         relation: "nn", // ONE-TO-MANY
+//         onDelete: "SET NULL",
+//         onUpdate: "SET DEFAULT",
+//       },
+//     },
+//     {
+//       name: "referrer_ids",
+//       type: "uuid[]",
+//       references: {
+//         table: "principal",
+//         column: "id",
+//         relation: "mm", // MANY-TO-MANY
+//       },
+//     },
+//     {
+//       name: "position_id",
+//       type: "UUID[]",
+//       references: {
+//         table: "position",
+//         column: "id",
+//         relation: "mm", // MANY-TO-MANY
+//       },
+//     },
+//   ],
+// });
 
-const moses = morm?.model({
-  table: "m",
-  columns: [
-    {
-      name: "idx",
-      type: "text",
-      primary: true,
-    },
-    {
-      name: "name",
-      type: "text",
-    },
-    {
-      name: "de",
-      type: "uuid[]",
-      references: {
-        table: "denis",
-        column: "idx",
-        relation: "mm",
-      },
-    },
-  ],
-});
+// const Profile = morm!.model({
+//   table: "profile",
+//   columns: [
+//     { name: "id", type: "uuid", primary: true, default: "uuid()" },
+//     {
+//       name: "user_id",
+//       type: "uuid",
+//       // unique: true,
+//       // notNull: true,
+//       // default: "uuid()",
+//       references: {
+//         table: "users",
+//         column: "id",
+//         relation: "nn",
+//         onDelete: "RESTRICT",
+//         onUpdate: "CASCADE",
+//       },
+//     },
+//   ],
+// });
 
-const User = morm?.model({
+// const Book = morm!.model({
+//   table: "book",
+//   columns: [
+//     { name: "id", type: "uuid", primary: true, default: "uuid()" },
+//     {
+//       name: "author_id",
+//       type: "uuid",
+//       // unique: true,
+//       // notNull: true,
+//       references: {
+//         table: "users",
+//         column: "id",
+//         relation: "nm",
+//         onDelete: "RESTRICT",
+//         onUpdate: "CASCADE",
+//       },
+//     },
+//   ],
+// });
+
+const User = morm!.model({
   table: "users",
   columns: [
-    { name: "ID", type: "uuid", primary: true, default: "uuid()" },
-    { name: "role", type: "USER_ROLE", default: "ADMIN" },
-    { name: "name", type: "text" },
-    {
-      name: "account_id",
-      type: "uuid",
-      references: {
-        table: "account",
-        column: "id",
-        relation: "nn", // ONE-TO-MANY
-        onDelete: "SET NULL",
-        onUpdate: "SET DEFAULT",
-      },
-    },
-    {
-      name: "referrer_ids",
-      type: "uuid[]",
-      references: {
-        table: "users",
-        column: "id",
-        relation: "mm", // MANY-TO-MANY
-      },
-    },
-    {
-      name: "position_id",
-      type: "UUID[]",
-      references: {
-        table: "position",
-        column: "id",
-        relation: "mm", // MANY-TO-MANY
-      },
-    },
+    { name: "id", type: "uuid", primary: true, default: "uuid()" },
+    { name: "name", type: "text", default: "mos" },
+    // { name: "account", type: "text", unique: true },
   ],
-});
-
-const Position = morm?.model({
-  table: "position",
-  columns: [
-    {
-      name: "id",
-      type: "uuid",
-      primary: true,
-      default: "uuid()",
-      notNull: false,
-      unique: true,
-    },
-    {
-      name: "name",
-      type: "int",
-      notNull: true,
-      unique: true,
-      default: 6,
-    },
-    {
-      name: "email",
-      type: "text",
-      notNull: true,
-      unique: true,
-      default: "inedumozey@gmail.",
-    },
-    {
-      name: "colr",
-      type: "text[]",
-      default: ["red", "blue", "green"],
-      notNull: false,
-      unique: true,
-    },
-    {
-      name: "m",
-      type: "uuid",
-      default: "uuid()",
-    },
-  ],
-  indexes: ["id", "name"],
-  sanitize: true, // false
 });
 
 await morm?.migrate();

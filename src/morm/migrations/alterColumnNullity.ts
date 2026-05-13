@@ -1,32 +1,13 @@
 // migrations/alterColumnNullity.ts
 
-import { colors } from "../utils/logColors.js";
+import { reporter } from "../utils/migrationReporter.js";
 
-/* ===================================================== */
-/* TYPES                                                 */
-/* ===================================================== */
-
-type DbColumn = {
-  column_name: string;
-  is_nullable: string; // "YES" | "NO"
-};
-
-type Counts = {
-  total: number;
-  nonNull: Record<string, number>;
-};
-
-/* ===================================================== */
-/* HELPERS                                               */
-/* ===================================================== */
+type DbColumn = { column_name: string; is_nullable: string };
+type Counts = { total: number; nonNull: Record<string, number> };
 
 function q(n: string) {
   return `"${n.replace(/"/g, '""')}"`;
 }
-
-/* ===================================================== */
-/* MAIN                                                  */
-/* ===================================================== */
 
 export async function alterColumnNullity(opts: {
   client: any;
@@ -34,19 +15,20 @@ export async function alterColumnNullity(opts: {
   existing: Map<string, DbColumn>;
   processed: any[];
   counts: Counts | null;
-  messages: string[];
+  skipCols?: Set<string>;
+  silentCols?: Set<string>;
 }): Promise<{ ok: boolean }> {
-  const { client, table, existing, processed, counts, messages } = opts;
-
+  const { client, table, existing, processed, counts, skipCols, silentCols } =
+    opts;
   const tableHasData = (counts?.total ?? 0) > 0;
+
+  const setList: string[] = [];
+  const droppedList: string[] = [];
 
   for (const col of processed) {
     if (col.__virtual) continue;
-
-    /* ========================================== */
-    /* SKIP PRIMARY KEYS (IMPLICITLY NOT NULL)    */
-    /* ========================================== */
     if (col.__primary) continue;
+    if (skipCols?.has(col.name)) continue;
 
     const row = existing.get(col.name);
     if (!row) continue;
@@ -56,52 +38,40 @@ export async function alterColumnNullity(opts: {
 
     if (modelNN === dbNN) continue;
 
-    /* ---------- DROP NOT NULL ---------- */
     if (!modelNN && dbNN) {
       await client.query(
-        `ALTER TABLE ${q(table)} ALTER COLUMN ${q(col.name)} DROP NOT NULL`
+        `ALTER TABLE ${q(table)} ALTER COLUMN ${q(col.name)} DROP NOT NULL`,
       );
-
-      messages.push(
-        `${colors.success}Dropped NOT NULL:${colors.reset} ${colors.subject}${col.name}${colors.reset}`
-      );
-      /* ---------- PRINT LOGS (ONCE) ---------- */
-      //   if (messages.length > 0) {
-      //     console.log(
-      //       `${colors.section}${colors.bold}MODEL MIGRATION:${colors.reset}`
-      //     );
-      //     console.log(`  ${colors.subject}${table}${colors.reset}`);
-      //     for (const m of messages) {
-      //       console.log(`    ${m}`);
-      //     }
-      //     console.log("");
-      //   }
-
+      droppedList.push(col.name);
       continue;
     }
 
-    /* ---------- SET NOT NULL ---------- */
     if (modelNN && !dbNN) {
       if (tableHasData && col.default === undefined) {
-        console.log(
-          `${colors.section}${colors.bold}MODEL MIGRATION ERROR:${colors.reset}`
-        );
-        console.log(`  ${colors.subject}${table}${colors.reset}`);
-        console.log(
-          `    ${colors.error}Cannot SET NOT NULL:${colors.reset} ` +
-            `${colors.subject}${col.name}${colors.reset}. Table contains data and the column has no default, add a default value or reset database`
-        );
-        console.log("");
+        reporter.addError({
+          section: "COLUMN",
+          table,
+          message: `Cannot SET NOT NULL on "${col.name}" — table has data and no default. Add a default or run migrate({ reset: true })`,
+        });
         return { ok: false };
       }
-
       await client.query(
-        `ALTER TABLE ${q(table)} ALTER COLUMN ${q(col.name)} SET NOT NULL`
+        `ALTER TABLE ${q(table)} ALTER COLUMN ${q(col.name)} SET NOT NULL`,
       );
-      messages.push(
-        `${colors.success}Set NOT NULL:${colors.reset} ${colors.subject}${col.name}${colors.reset}`
-      );
+      setList.push(col.name);
     }
+  }
+
+  const reportedDropped = droppedList.filter((n) => !silentCols?.has(n));
+  const reportedSet = setList.filter((n) => !silentCols?.has(n));
+
+  if (reportedSet.length > 0 || reportedDropped.length > 0) {
+    reporter.addColumn({
+      kind: "notNull",
+      table,
+      set: reportedSet,
+      dropped: reportedDropped,
+    });
   }
 
   return { ok: true };

@@ -1,9 +1,13 @@
 // sql/buildColumnSQL.ts
 
 import type { ColumnDefinition } from "../model-types.js";
-import { canonicalType } from "../utils/canonicalType.js";
+import {
+  canonicalType,
+  canonicalTypeWithModifier,
+  extractTypeModifier,
+} from "../utils/canonicalType.js";
 import { parseCheck } from "../utils/checkParser.js";
-import { colors } from "../utils/logColors.js";
+import { reporter } from "../utils/migrationReporter.js";
 import { normalizeRelation } from "../utils/relationValidator.js";
 
 function isNumber(v: any): boolean {
@@ -19,30 +23,51 @@ const BUILTIN_SCALARS = new Set([
   "UUID",
   "BOOLEAN",
   "JSONB",
+  "JSON",
   "TIMESTAMP",
   "TIMESTAMPTZ",
   "DATE",
   "TIME",
-  "TIMEZ",
+  "TIMETZ",
   "NUMERIC",
   "DECIMAL",
+  "REAL",
+  "FLOAT8",
+  "VARCHAR",
+  "CHAR",
+  "BYTEA",
 ]);
 
 function isArrayType(typeUpper: string) {
-  return typeUpper.endsWith("[]");
+  return typeUpper.toUpperCase().endsWith("[]");
 }
 
+/**
+ * Normalize a type string to its canonical form, preserving modifiers.
+ * "varchar(255)" → "VARCHAR(255)"
+ * "numeric(10,2)" → "NUMERIC(10,2)"
+ * "text" → "TEXT"
+ * "uuid[]" → "UUID[]"
+ */
 function normalizeType(type: string): string {
   const raw = String(type).trim();
   const upper = raw.toUpperCase();
 
   if (isArrayType(upper)) {
     const base = upper.slice(0, -2);
-    if (BUILTIN_SCALARS.has(base)) return `${base}[]`;
+    const canonical = canonicalType(base);
+    if (BUILTIN_SCALARS.has(canonical)) return `${canonical}[]`;
     return raw;
   }
 
-  if (BUILTIN_SCALARS.has(upper)) return upper;
+  // Preserve modifier if present
+  const modifier = extractTypeModifier(raw);
+  const canonical = canonicalType(raw);
+
+  if (BUILTIN_SCALARS.has(canonical)) {
+    return modifier ? `${canonical}${modifier}` : canonical;
+  }
+
   return raw;
 }
 
@@ -88,7 +113,14 @@ function formatPgArrayLiteral(elems: any[], elementTypeUpper: string) {
 }
 
 function looksLikeFunction(raw: string) {
-  return /\w+\s*\(.*\)/.test(raw);
+  // Match word(args) but NOT known parameterized type patterns
+  // e.g. "uuid()" is a function, "VARCHAR(255)" is a type not a function
+  return (
+    /\w+\s*\(.*\)/.test(raw) &&
+    !/^(VARCHAR|CHAR|NUMERIC|DECIMAL|CHARACTER\s+VARYING|CHARACTER)\s*\(/i.test(
+      raw.trim(),
+    )
+  );
 }
 
 export function buildColumnSQL(
@@ -98,7 +130,7 @@ export function buildColumnSQL(
     __identity?: boolean;
     __isEnumType?: boolean;
     __virtual?: boolean;
-  }
+  },
 ): string {
   const parts: string[] = [];
   parts.push(`"${col.name}"`);
@@ -108,27 +140,31 @@ export function buildColumnSQL(
   }
 
   const typRaw = String(col.type);
-  const typNormalized = normalizeType(typRaw);
-  const typUpper = typNormalized.toUpperCase();
+  const typNormalized = normalizeType(typRaw); // e.g. "VARCHAR(255)"
+  const typUpper = typNormalized.toUpperCase(); // e.g. "VARCHAR(255)"
+  const typBase = canonicalType(typRaw); // e.g. "VARCHAR" (no modifier)
+  const typModifier = extractTypeModifier(typRaw); // e.g. "(255)"
 
   if (col.__identity) {
     let type = "INTEGER";
-    if (typUpper == "SMALLINT") type = "SMALLINT";
-    if (typUpper == "BIGINT") type = "BIGINT";
+    if (typBase === "SMALLINT") type = "SMALLINT";
+    if (typBase === "BIGINT") type = "BIGINT";
     parts.push(`${type} GENERATED ALWAYS AS IDENTITY`);
   } else if (isArrayType(typUpper)) {
-    const base = typUpper.slice(0, -2);
-    if (BUILTIN_SCALARS.has(base)) {
-      parts.push(`${base}[]`);
+    const base = typUpper.slice(0, -2).replace(/\s*\(.*\)$/, "");
+    const baseCanonical = canonicalType(base);
+    if (BUILTIN_SCALARS.has(baseCanonical)) {
+      parts.push(`${baseCanonical}[]`);
     } else {
-      parts.push(`"${base}"[]`);
+      parts.push(`"${baseCanonical}"[]`);
     }
   } else {
-    if (BUILTIN_SCALARS.has(typUpper)) {
-      parts.push(typUpper);
+    if (BUILTIN_SCALARS.has(typBase)) {
+      // Output base type + modifier if present (e.g. VARCHAR(255), NUMERIC(10,2))
+      parts.push(typModifier ? `${typBase}${typModifier}` : typBase);
     } else {
-      // ENUM — always uppercase, quoted
-      parts.push(`"${canonicalType(typRaw)}"`);
+      // ENUM — always uppercase, quoted, no modifier
+      parts.push(`"${typBase}"`);
     }
   }
   // if col is primary key, ignore notNull and unique settings otherwise, allow both to be set
@@ -143,36 +179,21 @@ export function buildColumnSQL(
     try {
       const sqlCheck = parseCheck(String(col.check));
       parts.push(`CHECK (${sqlCheck})`);
-    } catch (err: any) {
-      console.error(
-        `${colors.section}${colors.bold}CHECK VALIDATION:${colors.reset}`
-      );
-      console.error(`  ${colors.subject}${col.name}${colors.reset}`);
-      console.error(`    ${colors.error}Error:${colors.reset} ${err.message}`);
-
+    } catch {
       return parts.join(" ");
     }
   }
 
-  buildDefault(col, parts, typUpper);
+  buildDefault(col, parts, typBase);
 
   if (col.references) {
     const ref = col.references;
     const onDelete = ref.onDelete ?? "CASCADE";
     const onUpdate = ref.onUpdate ?? "CASCADE";
 
-    if (normalizeRelation(ref.relation) === "ONE-TO-ONE") {
-      // if relation is ONE-TO-ONE, it should be not null and unique by default
-      if (col.notNull !== false) {
-        parts.push("NOT NULL");
-      }
-      // if relation is ONE-TO-ONE, it must always be uniquw
-      parts.push("UNIQUE");
-    }
-
     parts.push(
-      `REFERENCES "${ref.table}"("${ref.column}")` +
-        `ON DELETE ${onDelete} ON UPDATE ${onUpdate}`
+      `REFERENCES "${ref.table}"("${ref.column}") ` +
+        `ON DELETE ${onDelete} ON UPDATE ${onUpdate}`,
     );
   }
 
@@ -214,17 +235,36 @@ function buildDefault(col: any, parts: string[], typUpper: any) {
           break;
 
         default:
-          throw new Error(`now() is not valid for column type ${typeUpper}`);
+          reporter.addError({
+            section: "MODEL",
+            table: col.name,
+            message: `now() is not valid for column type ${typeUpper}`,
+          });
+          break;
       }
     }
 
     // arrays
     else if (Array.isArray(def)) {
-      const elType = typeUpper.endsWith("[]")
-        ? typeUpper.slice(0, -2)
-        : typeUpper;
-      const arrLit = formatPgArrayLiteral(def, elType);
-      parts.push(`DEFAULT '${arrLit}'`);
+      if (typeUpper === "JSON" || typeUpper === "JSONB") {
+        parts.push(`DEFAULT '${escapeLiteral(JSON.stringify(def))}'`);
+      } else if (typeUpper === "JSON[]" || typeUpper === "JSONB[]") {
+        if (def.length === 0) {
+          parts.push(`DEFAULT '{}'`);
+        } else {
+          reporter.addError({
+            section: "MODEL",
+            table: col.name,
+            message: `Non-empty default for ${typeUpper} is not supported — use [] or remove the default`,
+          });
+        }
+      } else {
+        const elType = typeUpper.endsWith("[]")
+          ? typeUpper.slice(0, -2)
+          : typeUpper;
+        const arrLit = formatPgArrayLiteral(def, elType);
+        parts.push(`DEFAULT '${arrLit}'`);
+      }
     }
 
     // numeric

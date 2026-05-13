@@ -3,13 +3,14 @@
 import { Pool } from "pg";
 
 import { createModelRuntime } from "./model.js";
-import { colors } from "./utils/logColors.js";
 import { validateAndSortModels } from "./utils/relationValidator.js";
 import type { ColumnDefinition } from "./model-types.js";
+import type { IndexDefinition } from "./migrations/indexMigrations.js";
 import { EnumRegistry, migrateEnumsGlobal } from "./migrations/enumRegistry.js";
 import { resetDatabase } from "./migrations/resetDatabase.js";
 import { tableMigrations } from "./migrations/tableMigrations.js";
 import { renderJunctionBuilder } from "./utils/junctionBuilder.js";
+import { reporter } from "./utils/migrationReporter.js";
 
 export interface TransactionOptions {
   maxWait?: number;
@@ -26,81 +27,73 @@ export class Morm {
   private url!: URL;
   private options?: MormOptions | undefined;
   private models: any[] = [];
+  private modelMap = new Map<string, any>(); // fix #7 — lookup by table name
   private _migrating: boolean = false;
   private enumRegistry = new EnumRegistry();
-  private _indexSummary: any;
 
-  /** --------------------------------------------------
-   * Instance cache: ensures one Morm per URL
+  /* --------------------------------------------------
+   * Instance cache — keyed by host+port+dbname only,
+   * never by full connection string (fix #5 — no passwords in keys)
    * -------------------------------------------------- */
   private static instances: Map<string, Morm> = new Map();
   private constructor() {}
 
-  /** --------------------------------------------------
-   * MAIN ENTRY:
-   * Initiate Morm instance from database url.
-   * Will create the database automatically if missing.
+  private static cacheKey(url: URL): string {
+    const port = url.port || "5432";
+    return `${url.hostname}:${port}${url.pathname}`;
+  }
+
+  /* --------------------------------------------------
+   * MAIN ENTRY
    * -------------------------------------------------- */
   static async init(
     connectionString: string,
     options?: MormOptions,
-    callback?: (error: Error | null, message?: string) => void
+    callback?: (error: Error | null, message?: string) => void,
   ): Promise<Morm | null> {
-    // -------- Instance Caching --------
-    if (this.instances.has(connectionString)) {
-      const inst = this.instances.get(connectionString)!;
+    const parsedUrl = new URL(connectionString);
+    const key = Morm.cacheKey(parsedUrl);
+
+    if (this.instances.has(key)) {
+      const inst = this.instances.get(key)!;
       if (callback) callback(null, "Connection successful (from cache).");
       return inst;
     }
 
-    // New instance
     const instance = new Morm();
-    instance.url = new URL(connectionString);
+    instance.url = parsedUrl;
     instance.options = options;
 
-    const dbName = instance.url.pathname.slice(1);
-    const host = instance.url.hostname;
-
+    const dbName = parsedUrl.pathname.slice(1);
+    const host = parsedUrl.hostname;
     const isLocal =
       host === "localhost" || host === "127.0.0.1" || host === "::1";
-
     const ssl =
       options?.allowSSL ?? (!isLocal && { rejectUnauthorized: false });
 
-    // -------- STEP 1 — Ensure DB exists ---------
+    /* --- Ensure DB exists --- */
     const adminURL = new URL(connectionString);
     adminURL.pathname = "/postgres";
 
-    const adminPool = new Pool({
-      connectionString: adminURL.toString(),
-      ssl,
-    });
+    const adminPool = new Pool({ connectionString: adminURL.toString(), ssl });
 
     const message = await adminPool
       .query(`CREATE DATABASE "${dbName}"`)
       .then(() => `Database '${dbName}' created successfully.`)
       .catch((err: any) => {
-        if (err.code === "42P04") {
-          return `Database '${dbName}' already exists.`;
-        }
-        throw err; // real error → let it bubble
+        if (err.code === "42P04") return `Database '${dbName}' already exists.`;
+        throw err;
       })
       .finally(() => adminPool.end());
 
-    // -------- STEP 2 — Connect to target DB --------
+    /* --- Connect to target DB --- */
     return new Pool({ connectionString, ssl })
       .connect()
       .then((client: any) => {
-        client.release(); // connection OK
-
-        // Install pool on instance
+        client.release();
         instance.pool = new Pool({ connectionString, ssl });
-
-        // Cache it
-        this.instances.set(connectionString, instance);
-
+        this.instances.set(key, instance);
         if (callback) callback(null, message);
-
         return instance;
       })
       .catch((err: any) => {
@@ -108,17 +101,18 @@ export class Morm {
           callback(err, undefined);
           return null;
         }
-        throw err; // no callback -> reject promise
+        throw err;
       });
   }
 
-  /** Run a transaction */
+  /* --------------------------------------------------
+   * TRANSACTION
+   * -------------------------------------------------- */
   async transaction<T>(
     fn: (client: any) => Promise<T>,
-    config: Partial<TransactionOptions> = {}
+    config: Partial<TransactionOptions> = {},
   ) {
     const client = await this.pool.connect();
-
     const maxWait =
       config.maxWait ?? this.options?.transaction?.maxWait ?? 2000;
     const timeout =
@@ -128,9 +122,7 @@ export class Morm {
       await client.query("BEGIN");
       await client.query(`SET LOCAL lock_timeout = '${maxWait}ms'`);
       await client.query(`SET LOCAL statement_timeout = '${timeout}ms'`);
-
       const result = await fn(client);
-
       await client.query("COMMIT");
       return result;
     } catch (err) {
@@ -141,176 +133,199 @@ export class Morm {
     }
   }
 
-  /** Close connection */
+  /* --------------------------------------------------
+   * POOL ACCESS — for query layer
+   * -------------------------------------------------- */
+  async connect() {
+    return this.pool.connect();
+  }
+
   private async close() {
     await this.pool.end();
   }
 
-  /* ================================
-   * Enums
-   * ================================ */
+  /* --------------------------------------------------
+   * ENUM ACCESSORS — used by model.ts (fix #1)
+   * -------------------------------------------------- */
+  hasEnum(name: string): boolean {
+    return this.enumRegistry.has(name);
+  }
+
+  getEnum(name: string) {
+    return this.enumRegistry.get(name);
+  }
+
+  /* --------------------------------------------------
+   * ENUMS
+   * -------------------------------------------------- */
   enums(defs: { name: string; values: string[] }[]) {
     this.enumRegistry.register(defs);
   }
 
+  /* --------------------------------------------------
+   * MODEL — fix #3 (indexes type) + fix #7 (modelMap)
+   * -------------------------------------------------- */
   model(config: {
     table: string;
     columns: ColumnDefinition[];
-    indexes?: readonly string[];
+    indexes?: readonly IndexDefinition[];
     sanitize?: boolean | "strict";
   }) {
     const normalizedColumns = config.columns.map((col) => {
       const out: any = { ...col };
-
-      /* ------------------------------
-       * Unwrap functional properties
-       * ------------------------------ */
-      if (typeof out.name === "function") {
-        out.name = out.name();
-      }
-      if (typeof out.type === "function") {
-        out.type = out.type();
-      }
-      if (typeof out.primary === "function") {
-        out.primary = out.primary();
-      }
-      if (typeof out.unique === "function") {
-        out.unique = out.unique();
-      }
-      if (typeof out.notNull === "function") {
-        out.notNull = out.notNull();
-      }
-      if (typeof out.default === "function") {
-        out.default = out.default();
-      }
-      if (typeof out.check === "function") {
-        out.check = out.check();
-      }
-      if (typeof out.sanitize === "function") {
-        out.sanitize = out.sanitize();
-      }
-
+      if (typeof out.name === "function") out.name = out.name();
+      if (typeof out.type === "function") out.type = out.type();
+      if (typeof out.primary === "function") out.primary = out.primary();
+      if (typeof out.unique === "function") out.unique = out.unique();
+      if (typeof out.notNull === "function") out.notNull = out.notNull();
+      if (typeof out.default === "function") out.default = out.default();
+      if (typeof out.check === "function") out.check = out.check();
+      if (typeof out.sanitize === "function") out.sanitize = out.sanitize();
       return out;
     });
 
-    const mdl = createModelRuntime(this, {
+    const normalizedConfig = {
       ...config,
+      table: config.table.toLowerCase(),
+    };
+
+    const mdl = createModelRuntime(this, {
+      ...normalizedConfig,
       columns: normalizedColumns,
     } as any);
 
     this.models.push(mdl);
+    this.modelMap.set(mdl.table, mdl); // register for lookup
     return mdl;
   }
 
-  /* ================================
-   * Migration
-   * ================================ */
-  async migrate(option?: { clean?: boolean; reset?: boolean }) {
+  /* --------------------------------------------------
+   * MODEL LOOKUP — for query layer (fix #7)
+   * -------------------------------------------------- */
+  getModel(table: string) {
+    return this.modelMap.get(table);
+  }
+
+  /* --------------------------------------------------
+   * MIGRATE
+   * -------------------------------------------------- */
+  async migrate(option?: { reset?: boolean }) {
     if (this._migrating) return false;
     this._migrating = true;
-    const client = await this.pool.connect();
 
-    const options = { clean: true, reset: false, ...option };
+    const options = { reset: false, ...option };
 
-    /* ---- DATABASE RESET => reset:true--- */
-    if (options.reset) {
-      await resetDatabase(this.pool);
-    }
+    /* ---- PHASE 1 — Pre-flight ---- */
 
-    /* ---------- ENUM MIGRATION ---------- */
-    if (this.enumRegistry.hasErrors()) {
-      this.enumRegistry.printErrors();
-
-      this.enumRegistry.clearErrors();
+    /* Production reset guard (fix #9) */
+    if (options.reset && process.env.NODE_ENV === "production") {
+      reporter.addError({
+        section: "MIGRATION",
+        message: "migrate({ reset: true }) is not allowed in production",
+      });
+      reporter.render();
       this._migrating = false;
       return false;
     }
 
-    // SAFE: only pass resolved enum data
-    await migrateEnumsGlobal(this.pool, this.enumRegistry.all());
+    if (this.enumRegistry.hasErrors()) {
+      this.enumRegistry.printErrors();
+      this.enumRegistry.clearErrors();
+      reporter.render();
+      this._migrating = false;
+      return false;
+    }
 
-    /* ----------MODEL VALIDATION ---------- */
     for (const model of this.models) {
       if (model.sql.create === "") {
-        console.log(
-          `${colors.section}${colors.bold}MORM MIGRATION:${colors.reset}`
-        );
-        console.log(
-          `  ${colors.error}Aborted:${colors.reset} ${colors.subject}${model.table}${colors.reset}`
-        );
+        reporter.render();
         this._migrating = false;
         return false;
       }
     }
 
-    /* ---------- RELATION VALIDATION ---------- */
     const relRes = validateAndSortModels(this.models);
     if (relRes.errors?.length) {
-      console.log(
-        `${colors.section}${colors.bold}RELATION ERROR:${colors.reset}`
-      );
       for (const e of relRes.errors) {
-        console.log(e);
+        reporter.addError({
+          section: "RELATION",
+          message: e.message,
+          ...(e.table !== undefined && { table: e.table }),
+        });
       }
-      console.log();
+      reporter.render();
       this._migrating = false;
       return false;
     }
 
     if (relRes.sorted) this.models = relRes.sorted;
 
-    /* ---------- APPLY MIGRATIONS ---------- */
+    /* ---- PHASE 2 — Out-of-transaction (enums + reset) ---- */
+    const enumClient = await this.pool.connect();
     try {
-      await client.query("BEGIN");
-      await client.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
-
-      /* --------- TABLE MIGRATIONS --------*/
-      await tableMigrations(client, this.models);
-
-      /**------LOG OUT MESSAGES */
-      if (this._indexSummary?.size) {
-        console.log(
-          `${colors.section}${colors.bold}INDEX MIGRATION:${colors.reset}`
-        );
-
-        for (const [table, indexes] of this._indexSummary.entries()) {
-          console.log(`  ${colors.subject}${table}${colors.reset}`);
-          console.log(
-            `    ${colors.success}Created:${colors.reset} ${
-              colors.subject
-            }${indexes.join(", ")}${colors.reset}`
-          );
-        }
-
-        console.log("");
+      if (options.reset) {
+        await resetDatabase(enumClient);
+        // Add a single clean notice instead of noisy drop lists
+        reporter.addWarning({
+          section: "RESET",
+          message:
+            "Database was reset — all tables, enums and indexes were dropped and will be recreated",
+        });
       }
+      await migrateEnumsGlobal(enumClient, this.enumRegistry.all());
+    } catch (err: any) {
+      reporter.addError({ section: "ENUM", message: String(err) });
+      reporter.render();
+      this._migrating = false;
+      return false;
+    } finally {
+      enumClient.release();
+    }
 
-      /* ---------- JUNCTION TABLES ---------- */
+    /* ---- PHASE 3 — Transactional DDL ---- */
+    const client = await this.pool.connect();
+    try {
+      /* Advisory lock — prevents concurrent migrations across processes (fix #10) */
+      await client.query("SELECT pg_advisory_lock(7781135263)");
+      await client.query("BEGIN");
+      await client.query("CREATE EXTENSION IF NOT EXISTS pgcrypto;");
+
+      /* Shared updated_at trigger function — created once per DB (fix for race) */
+      await client.query(`
+        CREATE OR REPLACE FUNCTION morm_set_updated_at()
+        RETURNS trigger AS $$
+        BEGIN
+          NEW.updated_at = NOW();
+          RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+      `);
+
+      /* Table migrations — returns set of newly created tables */
+      const createdTables = await tableMigrations(client, this.models);
+
+      /* Junction tables */
       await renderJunctionBuilder(client, this.models);
 
-      /* ---------- COLUMN MIGRATIONS ---------- */
-      {
-        for (const model of this.models) {
-          await model.migrate(client);
-        }
+      /* Column migrations — skip diffing on brand new tables (fix #2) */
+      for (const model of this.models) {
+        await model.migrate(client, createdTables);
       }
 
       await client.query("COMMIT");
     } catch (err) {
       await client.query("ROLLBACK");
-      console
-        .log
-        // `${colors.section}${colors.bold}MORM MIGRATION ERROR:${colors.reset}`
-        ();
-      console.log(
-        `  ${colors.error}Failed:${colors.reset} ${colors.subject}${String(
-          err
-        )}${colors.reset}`
-      );
+      reporter.addError({ section: "MIGRATION", message: String(err) });
     } finally {
+      /* Always release advisory lock, even on error */
+      try {
+        await client.query("SELECT pg_advisory_unlock(7781135263)");
+      } catch {}
       client.release();
     }
 
+    reporter.render();
+    reporter.reset();
     this._migrating = false;
     return true;
   }

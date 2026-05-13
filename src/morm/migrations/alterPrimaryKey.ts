@@ -1,23 +1,9 @@
 // migrations/alterPrimaryKey.ts
 
-import { colors } from "../utils/logColors.js";
+import { reporter } from "../utils/migrationReporter.js";
 
-/* ===================================================== */
-/* TYPES                                                 */
-/* ===================================================== */
-
-type Counts = {
-  total: number;
-};
-
-type DbPrimaryKey = {
-  name: string;
-  column: string;
-} | null;
-
-/* ===================================================== */
-/* HELPERS                                               */
-/* ===================================================== */
+type Counts = { total: number };
+type DbPrimaryKey = { name: string; column: string } | null;
 
 function q(n: string) {
   return `"${n.replace(/"/g, '""')}"`;
@@ -25,134 +11,149 @@ function q(n: string) {
 
 async function getPrimaryKey(
   client: any,
-  table: string
+  table: string,
 ): Promise<DbPrimaryKey> {
   const res = await client.query(
     `
-    SELECT
-      c.conname,
-      a.attname AS column
+    SELECT c.conname, a.attname AS column
     FROM pg_constraint c
     JOIN pg_class t ON t.oid = c.conrelid
     JOIN pg_attribute a ON a.attrelid = t.oid
-    JOIN unnest(c.conkey) WITH ORDINALITY AS cols(attnum, ord)
-      ON cols.attnum = a.attnum
-    WHERE
-      c.contype = 'p'
-      AND t.relname = $1
+    JOIN unnest(c.conkey) WITH ORDINALITY AS cols(attnum, ord) ON cols.attnum = a.attnum
+    WHERE c.contype = 'p' AND t.relname = $1
     `,
-    [table]
+    [table],
   );
-
   if (res.rowCount === 0) return null;
-
-  // single-column PK only (by design)
-  return {
-    name: res.rows[0].conname,
-    column: res.rows[0].column,
-  };
+  return { name: res.rows[0].conname, column: res.rows[0].column };
 }
-
-/* ===================================================== */
-/* MAIN                                                  */
-/* ===================================================== */
 
 export async function alterPrimaryKey(opts: {
   client: any;
   table: string;
   processed: any[];
   counts: Counts | null;
-  messages: string[];
+  dbIdentityNames?: Set<string>;
+  modelIdentityNames?: Set<string>;
 }): Promise<{ ok: boolean }> {
-  const { client, table, processed, counts, messages } = opts;
+  const {
+    client,
+    table,
+    processed,
+    counts,
+    dbIdentityNames = new Set(),
+    modelIdentityNames = new Set(),
+  } = opts;
 
   const tableHasData = (counts?.total ?? 0) > 0;
-
   const dbPK = await getPrimaryKey(client, table);
   const modelPKs = processed.filter((c) => c.__primary);
 
-  /* ===================================================== */
-  /* VALIDATION                                            */
-  /* ===================================================== */
-
+  /* Multiple PKs in model */
   if (modelPKs.length > 1) {
-    console.log(
-      `${colors.section}${colors.bold}MODEL MIGRATION ERROR:${colors.reset}`
-    );
-    console.log(`  ${colors.subject}${table}${colors.reset}`);
-    console.log(
-      `    ${colors.error}Multiple PRIMARY KEYs defined:${colors.reset} ` +
-        modelPKs.map((c) => c.name).join(", ")
-    );
-    console.log("");
+    reporter.addError({
+      section: "COLUMN",
+      table,
+      message: `Multiple PRIMARY KEYs defined: ${modelPKs.map((c) => c.name).join(", ")}`,
+    });
     return { ok: false };
   }
 
-  /* ---------- NO CHANGE ---------- */
+  /* DB PK is an identity column */
+  if (dbPK && dbIdentityNames.has(dbPK.column)) {
+    if (modelIdentityNames.size > 0) {
+      const newIdentityName = Array.from(modelIdentityNames)[0]!;
+
+      if (newIdentityName !== dbPK.column) {
+        // Check if any other table references this column as a FK
+        const fkRes = await client.query(
+          `
+          SELECT tc.table_name
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.constraint_column_usage ccu
+            ON tc.constraint_name = ccu.constraint_name
+          WHERE tc.constraint_type = 'FOREIGN KEY'
+            AND ccu.table_schema = 'public'
+            AND LOWER(ccu.table_name) = LOWER($1)
+            AND ccu.column_name = $2
+          `,
+          [table, dbPK.column],
+        );
+
+        if (fkRes.rows.length > 0) {
+          // FK references exist — cannot rename safely
+          const refs = fkRes.rows.map((r: any) => r.table_name).join(", ");
+          reporter.addError({
+            section: "PK",
+            table,
+            message: `Cannot rename identity PK "${dbPK.column}" to "${newIdentityName}" — referenced by FK in: ${refs}. Drop the FK constraints first or run migrate({ reset: true })`,
+          });
+          return { ok: false };
+        }
+
+        // No FK references — safe to rename directly
+        await client.query(
+          `ALTER TABLE ${q(table)} RENAME COLUMN ${q(dbPK.column)} TO ${q(newIdentityName)}`,
+        );
+        reporter.addColumn({
+          kind: "renamed",
+          table,
+          pairs: [{ from: dbPK.column, to: newIdentityName }],
+        });
+      }
+    }
+    // Identity PK managed by PostgreSQL — nothing else to do
+    return { ok: true };
+  }
+
+  /* No change */
   if (dbPK && modelPKs.length === 1 && dbPK.column === modelPKs[0].name) {
     return { ok: true };
   }
 
-  /* ===================================================== */
-  /* DROP PRIMARY KEY                                      */
-  /* ===================================================== */
-
+  /* Drop PK */
   if (dbPK && modelPKs.length === 0) {
     if (tableHasData) {
-      console.log(
-        `${colors.section}${colors.bold}MODEL MIGRATION ERROR:${colors.reset}`
-      );
-      console.log(`  ${colors.subject}${table}${colors.reset}`);
-      console.log(
-        `    ${colors.error}Cannot DROP PRIMARY KEY:${colors.reset} ` +
-          `${colors.subject}table contains data, reset database to proceed`
-      );
-      console.log("");
+      reporter.addError({
+        section: "COLUMN",
+        table,
+        message: `Cannot DROP PRIMARY KEY — table has data. Run migrate({ reset: true })`,
+      });
       return { ok: false };
     }
-
     await client.query(
-      `ALTER TABLE ${q(table)} DROP CONSTRAINT ${q(dbPK.name)}`
+      `ALTER TABLE ${q(table)} DROP CONSTRAINT ${q(dbPK.name)}`,
     );
-
-    messages.push(
-      `${colors.success}Dropped PRIMARY KEY:${colors.reset} ${colors.subject}${dbPK.column}${colors.reset}`
-    );
-
+    reporter.addColumn({
+      kind: "pk",
+      table,
+      added: [],
+      dropped: [dbPK.column],
+    });
     return { ok: true };
   }
 
-  /* ===================================================== */
-  /* ADD PRIMARY KEY                                       */
-  /* ===================================================== */
-
+  /* Add PK */
   if (!dbPK && modelPKs.length === 1) {
     await client.query(
-      `ALTER TABLE ${q(table)} ADD PRIMARY KEY (${q(modelPKs[0].name)})`
+      `ALTER TABLE ${q(table)} ADD PRIMARY KEY (${q(modelPKs[0].name)})`,
     );
-
-    messages.push(
-      `${colors.success}Added PRIMARY KEY:${colors.reset} ${colors.subject}${modelPKs[0].name}${colors.reset}`
-    );
-
+    reporter.addColumn({
+      kind: "pk",
+      table,
+      added: [modelPKs[0].name],
+      dropped: [],
+    });
     return { ok: true };
   }
 
-  /* ===================================================== */
-  /* CONFLICT (PK MOVE / CHANGE)                            */
-  /* ===================================================== */
-
+  /* PK conflict */
   if (dbPK && modelPKs.length === 1 && dbPK.column !== modelPKs[0].name) {
-    console.log(
-      `${colors.section}${colors.bold}MODEL MIGRATION ERROR:${colors.reset}`
-    );
-    console.log(`  ${colors.subject}${table}${colors.reset}`);
-    console.log(
-      `    ${colors.error}Cannot CHANGE PRIMARY KEY:${colors.reset} ` +
-        `${colors.subject}${dbPK.column}${colors.reset} → ${colors.subject}${modelPKs[0].name}${colors.reset} ` +
-        `${colors.subject}(reset database required)`
-    );
-    console.log("");
+    reporter.addError({
+      section: "COLUMN",
+      table,
+      message: `Cannot change PRIMARY KEY from "${dbPK.column}" to "${modelPKs[0].name}" — run migrate({ reset: true })`,
+    });
     return { ok: false };
   }
 

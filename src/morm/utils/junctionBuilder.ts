@@ -1,12 +1,8 @@
 // utils/junctionBuilder.ts
 
-import { colors } from "./logColors.js";
+import { reporter } from "./migrationReporter.js";
 
-type JunctionPlan = {
-  table: string;
-  createSQL: string;
-  indexSQL: string[];
-};
+type JunctionPlan = { table: string; createSQL: string; indexSQL: string[] };
 
 function snake(name: string) {
   return name.replace(/[A-Z]/g, (m) => "_" + m.toLowerCase()).replace(/^_/, "");
@@ -16,10 +12,6 @@ function sortedPair(a: string, b: string): [string, string] {
   return [a, b].sort((x, y) => x.localeCompare(y)) as [string, string];
 }
 
-/**
- * Build SQL for MANY-TO-MANY junction tables.
- * Pure function — NO execution.
- */
 export function buildJunctionTables(models: any[]): JunctionPlan[] {
   const plans: JunctionPlan[] = [];
   const seen = new Set<string>();
@@ -27,19 +19,15 @@ export function buildJunctionTables(models: any[]): JunctionPlan[] {
   function getPrimaryKeyType(model: any): string {
     const pk = model.primaryKey ?? "id";
     const col = model.columns?.find((c: any) => c.name === pk);
-
-    if (!col || !col.type) {
+    if (!col || !col.type)
       throw new Error(
-        `Cannot resolve primary key type for table "${model.table}"`
+        `Cannot resolve primary key type for table "${model.table}"`,
       );
-    }
-
     return String(col.type).toUpperCase();
   }
 
   for (const model of models) {
     if (!model?.table) continue;
-
     const tableA = String(model.table);
 
     for (const rel of model._relations?.outgoing ?? []) {
@@ -48,12 +36,8 @@ export function buildJunctionTables(models: any[]): JunctionPlan[] {
       const isSelf = rel.isSelf;
       if (!tableB) continue;
 
-      // deterministic naming order
       const [t1Raw, t2Raw] = sortedPair(tableA, tableB);
-
-      const junction = isSelf
-        ? `${snake(t1Raw)}_${snake(t2Raw)}_junction`
-        : `${snake(t1Raw)}_${snake(t2Raw)}_junction`;
+      const junction = `${snake(t1Raw)}_${snake(t2Raw)}_junction`;
 
       if (seen.has(junction)) continue;
       seen.add(junction);
@@ -61,34 +45,28 @@ export function buildJunctionTables(models: any[]): JunctionPlan[] {
       const colA = isSelf
         ? `${snake(rel.column)}_source_id`
         : `${snake(t1Raw)}_id`;
-
       const colB = isSelf
         ? `${snake(rel.column)}_target_id`
         : `${snake(t2Raw)}_id`;
 
       const modelA = models.find((m) => m.table === t1Raw);
       const modelB = models.find((m) => m.table === t2Raw);
-
       const pkA = modelA?.primaryKey ?? "id";
       const pkB = modelB?.primaryKey ?? "id";
-
       const pkTypeA = getPrimaryKeyType(modelA);
       const pkTypeB = getPrimaryKeyType(modelB);
 
       plans.push({
         table: junction,
         createSQL: `
-        CREATE TABLE IF NOT EXISTS "${junction}" (
-          "${colA}" ${pkTypeA} NOT NULL,
-          "${colB}" ${pkTypeB} NOT NULL,
-          PRIMARY KEY ("${colA}", "${colB}"),
-          FOREIGN KEY ("${colA}") REFERENCES "${t1Raw}"("${pkA}")
-            ON DELETE CASCADE ON UPDATE CASCADE,
-          FOREIGN KEY ("${colB}") REFERENCES "${t2Raw}"("${pkB}")
-            ON DELETE CASCADE ON UPDATE CASCADE
-        );
+          CREATE TABLE IF NOT EXISTS "${junction}" (
+            "${colA}" ${pkTypeA} NOT NULL,
+            "${colB}" ${pkTypeB} NOT NULL,
+            PRIMARY KEY ("${colA}", "${colB}"),
+            FOREIGN KEY ("${colA}") REFERENCES "${t1Raw}"("${pkA}") ON DELETE CASCADE ON UPDATE CASCADE,
+            FOREIGN KEY ("${colB}") REFERENCES "${t2Raw}"("${pkB}") ON DELETE CASCADE ON UPDATE CASCADE
+          );
         `.trim(),
-
         indexSQL: [
           `CREATE INDEX IF NOT EXISTS "${junction}_${colA}_idx" ON "${junction}"("${colA}")`,
           `CREATE INDEX IF NOT EXISTS "${junction}_${colB}_idx" ON "${junction}"("${colB}")`,
@@ -102,41 +80,46 @@ export function buildJunctionTables(models: any[]): JunctionPlan[] {
 
 async function tableExists(client: any, table: string): Promise<boolean> {
   const res = await client.query(
-    `
-    SELECT 1
-    FROM information_schema.tables
-    WHERE table_schema = 'public'
-      AND table_name = $1
-    `,
-    [table]
+    `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1`,
+    [table],
   );
   return res.rowCount > 0;
 }
 
 export async function renderJunctionBuilder(client: any, models: any) {
   const junctions = buildJunctionTables(models);
-  const createdJunctions: string[] = [];
+  const created: string[] = [];
+  const dropped: string[] = [];
 
+  const desiredJunctions = new Set(junctions.map((j) => j.table));
+
+  /* ---- Find and drop stale junction tables ---- */
+  const existingRes = await client.query(`
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name LIKE '%_junction'
+  `);
+
+  for (const row of existingRes.rows) {
+    const name = row.table_name as string;
+    if (!desiredJunctions.has(name)) {
+      await client.query(`DROP TABLE IF EXISTS "${name}" CASCADE`);
+      dropped.push(name);
+    }
+  }
+
+  /* ---- Create missing junction tables ---- */
   for (const j of junctions) {
     const exists = await tableExists(client, j.table);
     if (exists) continue;
-
     await client.query(j.createSQL);
-    for (const idx of j.indexSQL ?? []) {
-      await client.query(idx);
-    }
-    createdJunctions.push(j.table);
+    for (const idx of j.indexSQL ?? []) await client.query(idx);
+    created.push(j.table);
   }
 
-  if (createdJunctions.length > 0) {
-    console.log(
-      `${colors.section}${colors.bold}JUNCTION TABLE MIGRATION:${colors.reset}`
-    );
-    console.log(
-      `  ${colors.success}Created:${colors.reset} ${
-        colors.subject
-      }${createdJunctions.join(", ")}${colors.reset}`
-    );
-    console.log("");
-  }
+  if (created.length > 0)
+    reporter.addJunction({ kind: "created", names: created });
+  if (dropped.length > 0)
+    reporter.addTable({ kind: "dropped", names: dropped });
 }

@@ -1,30 +1,32 @@
 // model.ts
 
 import { validateDefaultValue } from "./utils/defaultValidator.js";
+import { validateColumnType } from "./utils/validateColumnType.js";
 import { indexMigrations } from "./migrations/indexMigrations.js";
 import { buildColumnSQL } from "./sql/buildColumnSQL.js";
 import { diffTable } from "./migrations/diffTable.js";
 import { sanitizeText, shouldSanitize } from "./utils/sanitize.js";
 import type { ColumnDefinition } from "./model-types.js";
-import { colors } from "./utils/logColors.js";
+import type { IndexDefinition } from "./migrations/indexMigrations.js";
 import { parseCheck } from "./utils/checkParser.js";
 import { normalizeRelation } from "./utils/relationValidator.js";
+import { reporter } from "./utils/migrationReporter.js";
 
 export function createModelRuntime(
   morm: any,
   config: {
     table: string;
     columns: readonly ColumnDefinition[];
-    indexes?: readonly string[] | undefined;
+    indexes?: readonly IndexDefinition[] | undefined;
     sanitize?: boolean | "strict";
-  }
+  },
 ) {
   const userDefinedCreatedAt = config.columns.some(
-    (c) => String(c.name).trim().toLowerCase() === "created_at"
+    (c) => String(c.name).trim().toLowerCase() === "created_at",
   );
 
   const userDefinedUpdatedAt = config.columns.some(
-    (c) => String(c.name).trim().toLowerCase() === "updated_at"
+    (c) => String(c.name).trim().toLowerCase() === "updated_at",
   );
 
   const validationMessages: string[] = [];
@@ -69,33 +71,54 @@ export function createModelRuntime(
   function parseTypeInfo(rawType: string) {
     const t = String(rawType).trim();
     const upper = t.toUpperCase();
-    const isArray = upper.endsWith("[]"); // check for array => true | false
-    const base = isArray ? upper.slice(0, -2) : upper; // get base type (TEXT[] => TEXT, TEXT=> TEXT)
+    // Strip modifier before checking for array e.g. "VARCHAR(255)[]" → "VARCHAR[]"
+    const withoutModifier = upper.replace(/\s*\(.*?\)/, "");
+    const isArray = withoutModifier.endsWith("[]");
+    const base = isArray ? withoutModifier.slice(0, -2) : withoutModifier;
     return { isArray, base };
   }
 
   /* MAIN LOOP ---------------------------------------------------------------- */
   for (const c of processed) {
-    c.name = String(c.name).toLowerCase();
-    // console.log(c);
+    const originalName = String(c.name);
+    c.name = originalName.toLowerCase();
+
+    /* WARN IF NAME WAS NOT LOWERCASE ----------------------------------------- */
+    if (originalName !== c.name) {
+      reporter.addWarning({
+        section: "NAME",
+        table: config.table,
+        message: `Column "${originalName}" was lowercased to "${c.name}" — define column names in lowercase to avoid confusion`,
+      });
+    }
+
     c.__primary = !!c.primary;
     const { isArray, base } = parseTypeInfo(String(c.type));
-    c.__isArray = isArray; // IS THE COLUMN AN ARRAY?
-    c.__arrayInner = isArray ? base : null; // GET THE INNER TYPE IF ARRAY
+    c.__isArray = isArray;
+    c.__arrayInner = isArray ? base : null;
     const d =
-      c.default == "string" ? c.default.trim().toLowerCase() : c.default;
+      typeof c.default === "string"
+        ? c.default.trim().toLowerCase()
+        : c.default;
 
     const rawType = String(c.type).trim();
     const upperType = rawType.toUpperCase();
 
-    // Detect enum type (non-built-in, non-array)
-    if (!upperType.endsWith("[]") && morm.enumRegistry?.has(upperType)) {
-      const enumDef = morm.enumRegistry.get(upperType);
+    /* VALIDATE COLUMN TYPE --------------------------------------------------- */
+    const typeErrors = validateColumnType(rawType);
+    for (const err of typeErrors) {
+      validationMessages.push(`Column "${c.name}": ${err}`);
+    }
+
+    // Detect enum type (non-built-in, non-array) — strip modifier first
+    const upperTypeBase = upperType.replace(/\s*\(.*?\)/, "").trim();
+    if (!upperTypeBase.endsWith("[]") && morm.hasEnum?.(upperTypeBase)) {
+      const enumDef = morm.getEnum?.(upperTypeBase);
 
       c.__isEnum = true;
       c.__enumName = upperType;
       c.__enumValuesLower = new Set(
-        enumDef.values.map((v: string) => v.toLowerCase())
+        enumDef.values.map((v: string) => v.toLowerCase()),
       );
     }
 
@@ -109,29 +132,18 @@ export function createModelRuntime(
       });
 
       for (const err of errs) {
-        validationMessages.push(
-          `${colors.error}${colors.bold}${err}${colors.reset}`
-        );
+        validationMessages.push(err);
       }
     }
 
     /* ADD IDENTITY TO COLUMN -------------------------------------------------------------- */
     {
       if (
-        (d === "int()" && base === "INT") ||
+        (d === "int()" && (base === "INT" || base === "INTEGER")) ||
         (d === "smallint()" && base === "SMALLINT") ||
         (d === "bigint()" && base === "BIGINT")
       ) {
         c.__identity = true;
-      }
-    }
-
-    /** VALIDATE AND PARSE CHECK VALUE --------------------------------------------------- */
-    if (c.check && !c.references) {
-      try {
-        parseCheck(String(c.check));
-      } catch (err: any) {
-        validationMessages.push(`Invalid check on ${c.name}: ${err.message}`);
       }
     }
 
@@ -144,6 +156,7 @@ export function createModelRuntime(
           c.notNull = true;
         }
         c.unique = true;
+        c.__isOneToOne = true;
       }
 
       if (rel === "MANY-TO-MANY") {
@@ -153,28 +166,32 @@ export function createModelRuntime(
     }
   }
 
+  /* DUPLICATE COLUMN NAMES ---------------------------------------------------- */
+  const columnNames = processed.map((c) => c.name);
+  const duplicates = columnNames.filter((n, i) => columnNames.indexOf(n) !== i);
+  if (duplicates.length > 0) {
+    validationMessages.push(
+      `Duplicate column name${duplicates.length > 1 ? "s" : ""}: ${[...new Set(duplicates)].join(", ")} — each column name must be unique`,
+    );
+  }
+
+  /* NO PRIMARY KEY ---------------------------------------------------------------- */
+  const hasPrimaryKey = processed.some((c) => c.__primary);
+  if (!hasPrimaryKey) {
+    validationMessages.push(
+      `Table "${config.table}" has no PRIMARY KEY — every table must have exactly one column with primary: true`,
+    );
+  }
+
   /* VALIDATION FAILED ----------------------------------------------------------- */
   if (validationMessages.length > 0) {
-    console.log(
-      `${colors.section}${colors.bold}MODEL VALIDATION:${colors.reset}`
-    );
-    console.log(`  ${colors.subject}${config.table}${colors.reset}`);
-
     for (const msg of validationMessages) {
-      console.log(
-        `    ${colors.error}Invalid:${colors.reset} ${
-          colors.subject
-        }${msg.replace(/^.*?:\s*/, "")}${colors.reset}`
-      );
+      reporter.addError({
+        section: "MODEL",
+        table: config.table,
+        message: msg,
+      });
     }
-
-    morm._migrationSummary ??= [];
-    morm._migrationSummary.push({
-      table: config.table,
-      ok: false,
-      changed: 0,
-      skipped: 0,
-    });
 
     return {
       table: config.table,
@@ -201,20 +218,13 @@ export function createModelRuntime(
 
   async function ensureUpdatedAtTrigger(client: any) {
     try {
-      await client.query(`
-        CREATE OR REPLACE FUNCTION morm_set_updated_at()
-        RETURNS trigger AS $$
-        BEGIN
-          NEW.updated_at = NOW();
-          RETURN NEW;
-        END;
-        $$ LANGUAGE plpgsql;
-      `);
-
+      // The morm_set_updated_at() function is created once at DB level
+      // in morm.ts before this runs — here we only attach the trigger
+      // to this specific table if it doesn't already exist.
       const trig = `morm_trigger_${config.table}_updated_at`;
       const chk = await client.query(
-        `SELECT 1 FROM pg_trigger WHERE tgname=$1`,
-        [trig]
+        `SELECT 1 FROM pg_trigger WHERE tgname = $1`,
+        [trig],
       );
 
       if (chk.rowCount === 0) {
@@ -235,7 +245,7 @@ export function createModelRuntime(
       if (!mode || !(col.name in out)) continue;
 
       const type = String(col.type).toUpperCase();
-      if (type === "TEXT" || type.startsWith("VARCHAR")) {
+      if (type === "TEXT" || type.startsWith("VARCHAR") || type === "CHAR") {
         out[col.name] = sanitizeText(out[col.name], mode);
       }
     }
@@ -254,52 +264,38 @@ export function createModelRuntime(
     sanitizeRow,
 
     async migrate(client: any, createdTables?: Set<string>) {
-      const messages: string[] = [];
-      if (createdTables?.has(config.table)) {
-        return true;
-      }
+      if (createdTables?.has(config.table)) return true;
+
       try {
-        const diff = await diffTable(
-          client,
-          { table: config.table },
-          processed
-        );
-        if (diff) messages.push(...diff);
+        const ok = await diffTable(client, { table: config.table }, processed);
+        if (!ok) return false;
+
         await ensureUpdatedAtTrigger(client);
 
-        const indexChanges = await indexMigrations(client, config);
+        const indexResult = await indexMigrations(client, config);
 
-        if (indexChanges.length > 0) {
-          morm._indexSummary ??= new Map();
-          morm._indexSummary.set(config.table, indexChanges);
-        }
-
-        const changed = messages.filter((m) =>
-          m.includes(colors.success)
-        ).length;
-        const skipped = messages.filter((m) => m.includes(colors.warn)).length;
-
-        if (changed > 0 || skipped > 0) {
-          morm._migrationSummary ??= [];
-          morm._migrationSummary.push({
+        if (indexResult.created.length > 0) {
+          reporter.addIndex({
+            kind: "created",
             table: config.table,
-            ok: true,
-            changed,
-            skipped,
+            names: indexResult.created,
+          });
+        }
+        if (indexResult.dropped.length > 0) {
+          reporter.addIndex({
+            kind: "dropped",
+            table: config.table,
+            names: indexResult.dropped,
           });
         }
 
         return true;
       } catch (err: any) {
-        console.log(
-          `${colors.section}${colors.bold}MODEL MIGRATION:${colors.reset}`
-        );
-        console.log(
-          ` ${colors.reset} ${colors.subject}${config.table}${colors.reset}`
-        );
-        console.log(
-          `     ${colors.error}Aborted: ${colors.subject}${err.message}${colors.reset}`
-        );
+        reporter.addError({
+          section: "MIGRATION",
+          table: config.table,
+          message: err.message,
+        });
         return false;
       }
     },
