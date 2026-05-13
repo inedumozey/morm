@@ -171,13 +171,24 @@ export async function tableMigrations(
 
     for (const r of resolved) {
       const refs = await isTableReferenced(client, r.from);
-      if (refs.length > 0) {
+
+      /* Drop junction tables that reference this table — they will be
+         recreated by renderJunctionBuilder with the new table name */
+      const nonJunctionRefs = refs.filter((t) => !t.endsWith("_junction"));
+
+      if (nonJunctionRefs.length > 0) {
         reporter.addError({
           section: "TABLE",
           table: r.from,
-          message: `Cannot RENAME to "${r.to}" — referenced by: ${refs.join(", ")}. Run migrate({ reset: true })`,
+          message: `Cannot RENAME to "${r.to}" — referenced by: ${nonJunctionRefs.join(", ")}. Run migrate({ reset: true })`,
         });
         return false;
+      }
+
+      /* Drop junction tables first so rename can proceed */
+      const junctionRefs = refs.filter((t) => t.endsWith("_junction"));
+      for (const jt of junctionRefs) {
+        await client.query(`DROP TABLE IF EXISTS ${q(jt)} CASCADE`);
       }
 
       await client.query(`ALTER TABLE ${q(r.from)} RENAME TO ${q(r.to)}`);

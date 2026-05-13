@@ -188,12 +188,42 @@ morm?.enums([
 //   ],
 // });
 
+const Post = morm!.model({
+  table: "post",
+  columns: [{ name: "id", type: "uuid", primary: true, default: "uuid()" }],
+});
+
+const Tag = morm!.model({
+  table: "tag",
+  columns: [
+    { name: "id", type: "uuid", primary: true, default: "uuid()" },
+    { name: "name", type: "text" },
+    {
+      name: "post_ids",
+      type: "uuid[]",
+      references: {
+        table: "post",
+        column: "id",
+        relation: "mm",
+      },
+    },
+  ],
+});
+
 const User = morm!.model({
   table: "users",
   columns: [
     { name: "id", type: "uuid", primary: true, default: "uuid()" },
     { name: "name", type: "text", default: "mos" },
-    // { name: "account", type: "text", unique: true },
+    {
+      name: "follower",
+      type: "uuid[]",
+      references: {
+        table: "users",
+        column: "id",
+        relation: "mm",
+      },
+    },
   ],
 });
 
