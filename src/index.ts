@@ -25,44 +25,21 @@ app.post("/", async (req, res) => {
   }
 });
 
-/**
- * MORM STORAGE
- * model-types.ts
- * sql/buildColumnSQL.ts
- * utils/canonicalType.ts
- * utils/relationValidator.ts
- * utils/junctionBuilder.ts
- * utils/validateColumnType.ts
- * utils/sanitize.ts
- * utils/checkParser.ts
- * migrations/alterColumn.ts
- * migrations/alterColumnCheck.ts
- * migrations/alterColumnNullity.ts
- * migrations/alterColumnTypes.ts
- * migrations/alterColumnUnique.ts
- * migrations/enumRegistry.ts
- * migrations/indexMigrations.ts
- * migrations/resetDatabase.ts
- */
 app.use("/docs", router.docsRouter);
 
 // usage
 import { Morm } from "./morm/morm.js";
 const db = async (db_name: string) => {
-  const db_url = `postgresql://postgres:postgres@localhost:5432/${db_name}`;
-
-  const morm = Morm.init(
-    db_url,
-    { transaction: { maxWait: 5000, timeout: 10000 } },
-    (err: any, res: any) => {
-      if (err) {
-        console.log(err);
-      } else {
-        console.log("Database connected");
-      }
-    },
-  );
-  return morm;
+  try {
+    const db_url = `postgresql://postgres:postgre@localhost:5432/${db_name}`;
+    const morm = await Morm.init(db_url, {
+      transaction: { maxWait: 5000, timeout: 10000 },
+    });
+    console.log("Database connected!");
+    return morm;
+  } catch (err) {
+    console.log("Database connection error:", err);
+  }
 };
 
 const morm = await db("drhmo");
@@ -106,7 +83,26 @@ const Tag = morm!.model({
   ],
 });
 
-await morm?.migrate();
+const User = morm!.model({
+  table: "user",
+  columns: [
+    { name: "id", type: "uuid", primary: true, default: "uuid()" },
+    { name: "name", type: "text" },
+    {
+      name: "friends",
+      type: "uuid[]",
+      references: {
+        table: "user",
+        column: "id",
+        relation: "mm",
+        onDelete: "RESTRICT",
+        onUpdate: "NO ACTION",
+      },
+    },
+  ],
+});
+
+// await morm?.migrate();
 // await morm?.migrate({ reset: true });
 
 app.listen(4000, () => console.log("Server running on port 4000"));

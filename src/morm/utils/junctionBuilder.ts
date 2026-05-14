@@ -2,7 +2,14 @@
 
 import { reporter } from "./migrationReporter.js";
 
-type JunctionPlan = { table: string; createSQL: string; indexSQL: string[] };
+type JunctionPlan = {
+  table: string;
+  createSQL: string;
+  indexSQL: string[];
+  expectedCols: string[];
+  onDelete: string;
+  onUpdate: string;
+};
 
 function snake(name: string) {
   return name.replace(/[A-Z]/g, (m) => "_" + m.toLowerCase()).replace(/^_/, "");
@@ -56,8 +63,14 @@ export function buildJunctionTables(models: any[]): JunctionPlan[] {
       const pkTypeA = getPrimaryKeyType(modelA);
       const pkTypeB = getPrimaryKeyType(modelB);
 
+      const onDelete = rel.onDelete ?? "CASCADE";
+      const onUpdate = rel.onUpdate ?? "CASCADE";
+
       plans.push({
         table: junction,
+        expectedCols: [colA, colB, "created_at", "updated_at"],
+        onDelete,
+        onUpdate,
         createSQL: `
           CREATE TABLE IF NOT EXISTS "${junction}" (
             "${colA}" ${pkTypeA} NOT NULL,
@@ -65,8 +78,8 @@ export function buildJunctionTables(models: any[]): JunctionPlan[] {
             "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
             "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY ("${colA}", "${colB}"),
-            FOREIGN KEY ("${colA}") REFERENCES "${t1Raw}"("${pkA}") ON DELETE CASCADE ON UPDATE CASCADE,
-            FOREIGN KEY ("${colB}") REFERENCES "${t2Raw}"("${pkB}") ON DELETE CASCADE ON UPDATE CASCADE
+            FOREIGN KEY ("${colA}") REFERENCES "${t1Raw}"("${pkA}") ON DELETE ${onDelete} ON UPDATE ${onUpdate},
+            FOREIGN KEY ("${colB}") REFERENCES "${t2Raw}"("${pkB}") ON DELETE ${onDelete} ON UPDATE ${onUpdate}
           );
         `.trim(),
         indexSQL: [
@@ -92,6 +105,7 @@ export async function renderJunctionBuilder(client: any, models: any) {
   const junctions = buildJunctionTables(models);
   const created: string[] = [];
   const dropped: string[] = [];
+  const recreated: string[] = [];
 
   const desiredJunctions = new Set(junctions.map((j) => j.table));
 
@@ -111,10 +125,69 @@ export async function renderJunctionBuilder(client: any, models: any) {
     }
   }
 
-  /* ---- Create missing junction tables ---- */
+  /* ---- Create or recreate junction tables ---- */
   for (const j of junctions) {
     const exists = await tableExists(client, j.table);
-    if (exists) continue;
+    let wasRecreated = false;
+
+    if (exists) {
+      /* Check if columns match expected */
+      const colRes = await client.query(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = $1
+         ORDER BY ordinal_position`,
+        [j.table],
+      );
+      const dbCols = colRes.rows.map((r: any) => r.column_name as string);
+      const expectedCols = j.expectedCols;
+
+      const colsMatch =
+        expectedCols.length ===
+          dbCols.filter((c: any) => expectedCols.includes(c)).length &&
+        expectedCols.every((c) => dbCols.includes(c));
+
+      /* Check FK actions */
+      let fkActionsMatch = true;
+      if (colsMatch) {
+        const fkRes = await client.query(
+          `
+          SELECT
+            CASE c.confdeltype
+              WHEN 'a' THEN 'NO ACTION'
+              WHEN 'r' THEN 'RESTRICT'
+              WHEN 'c' THEN 'CASCADE'
+              WHEN 'n' THEN 'SET NULL'
+              WHEN 'd' THEN 'SET DEFAULT'
+            END AS on_delete,
+            CASE c.confupdtype
+              WHEN 'a' THEN 'NO ACTION'
+              WHEN 'r' THEN 'RESTRICT'
+              WHEN 'c' THEN 'CASCADE'
+              WHEN 'n' THEN 'SET NULL'
+              WHEN 'd' THEN 'SET DEFAULT'
+            END AS on_update
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          WHERE c.contype = 'f' AND t.relname = $1
+          LIMIT 1
+          `,
+          [j.table],
+        );
+        if (fkRes.rows.length > 0) {
+          const dbOnDelete = fkRes.rows[0].on_delete;
+          const dbOnUpdate = fkRes.rows[0].on_update;
+          fkActionsMatch =
+            dbOnDelete === j.onDelete && dbOnUpdate === j.onUpdate;
+        }
+      }
+
+      if (colsMatch && fkActionsMatch) continue;
+
+      /* Columns differ — drop and recreate */
+      await client.query(`DROP TABLE IF EXISTS "${j.table}" CASCADE`);
+      wasRecreated = true;
+    }
+
     await client.query(j.createSQL);
     for (const idx of j.indexSQL ?? []) await client.query(idx);
 
@@ -133,11 +206,16 @@ export async function renderJunctionBuilder(client: any, models: any) {
       `);
     }
 
-    created.push(j.table);
+    if (wasRecreated) {
+      recreated.push(j.table);
+    } else {
+      created.push(j.table);
+    }
   }
-
   if (created.length > 0)
     reporter.addJunction({ kind: "created", names: created });
   if (dropped.length > 0)
     reporter.addJunction({ kind: "dropped", names: dropped });
+  if (recreated.length > 0)
+    reporter.addJunction({ kind: "recreated", names: recreated });
 }

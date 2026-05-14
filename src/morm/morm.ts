@@ -49,15 +49,12 @@ export class Morm {
   static async init(
     connectionString: string,
     options?: MormOptions,
-    callback?: (error: Error | null, message?: string) => void,
-  ): Promise<Morm | null> {
+  ): Promise<Morm> {
     const parsedUrl = new URL(connectionString);
     const key = Morm.cacheKey(parsedUrl);
 
     if (this.instances.has(key)) {
-      const inst = this.instances.get(key)!;
-      if (callback) callback(null, "Connection successful (from cache).");
-      return inst;
+      return this.instances.get(key)!;
     }
 
     const instance = new Morm();
@@ -77,34 +74,25 @@ export class Morm {
 
     const adminPool = new Pool({ connectionString: adminURL.toString(), ssl });
 
-    const message = await adminPool
+    await adminPool
       .query(`CREATE DATABASE "${dbName}"`)
-      .then(() => `Database '${dbName}' created successfully.`)
       .catch((err: any) => {
-        if (err.code === "42P04") return `Database '${dbName}' already exists.`;
+        if (err.code === "42P04") {
+          return;
+        }
         throw err;
       })
       .finally(() => adminPool.end());
 
     /* --- Connect to target DB --- */
-    return new Pool({ connectionString, ssl })
-      .connect()
-      .then((client: any) => {
-        client.release();
-        instance.pool = new Pool({ connectionString, ssl });
-        this.instances.set(key, instance);
-        if (callback) callback(null, message);
-        return instance;
-      })
-      .catch((err: any) => {
-        if (callback) {
-          callback(err, undefined);
-          return null;
-        }
-        throw err;
-      });
-  }
+    const client = await new Pool({ connectionString, ssl }).connect();
+    client.release();
 
+    instance.pool = new Pool({ connectionString, ssl });
+    this.instances.set(key, instance);
+
+    return instance;
+  }
   /* --------------------------------------------------
    * TRANSACTION
    * -------------------------------------------------- */

@@ -3,15 +3,15 @@
 
 Many-to-Many Pending
 
-Junction table diffing — when relation changes, drop and recreate junction
-onDelete/onUpdate configurable on junction FK columns
+✅ Junction table diffing — when relation changes, drop and recreate junction
+✅ onDelete/onUpdate configurable on junction FK columns
 Dropped junctions reported under JUNCTIONS not TABLES in reporter
 
 Previously identified fixes not yet done
 
 Fix 3 from early analysis — duplicate loop in indexMigrations.ts
-Fix 5 — identity events not emitted correctly in alterColumnTypes.ts and alterColumnDefault.ts
-Fix 7 — mixed callback/promise in morm.ts init
+Fix 5 — identity events not emitted correctly in alterColumnTypes.ts and alterColumnDefault.ts not wrong
+✅ Fix 7 — mixed callback/promise in morm.ts init
 
 Reporter
 

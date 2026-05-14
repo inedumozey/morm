@@ -243,6 +243,8 @@ export function validateAndSortModels(models: any[]): {
         toTable: refTable,
         column: col.name,
         isSelf: tableLower === refTableLower,
+        onDelete,
+        onUpdate,
       });
 
       targetModel._relations.incoming.push({

@@ -77,7 +77,8 @@ export type TableEvent =
 
 export type JunctionEvent =
   | { kind: "created"; names: string[] }
-  | { kind: "dropped"; names: string[] };
+  | { kind: "dropped"; names: string[] }
+  | { kind: "recreated"; names: string[] };
 
 export type ColumnEvent =
   | { kind: "added"; table: string; names: string[] }
@@ -477,11 +478,14 @@ function renderTables(events: TableEvent[]): string[] {
 function renderJunctions(events: JunctionEvent[]): string[] {
   const created: string[] = [];
   const dropped: string[] = [];
+  const recreated: string[] = [];
   for (const e of events) {
     if (e.kind === "created") created.push(...e.names);
     if (e.kind === "dropped") dropped.push(...e.names);
+    if (e.kind === "recreated") recreated.push(...e.names);
   }
-  if (created.length === 0 && dropped.length === 0) return [];
+  if (created.length === 0 && dropped.length === 0 && recreated.length === 0)
+    return [];
   const rows: { label: string; value: string; color?: string }[] = [];
   if (created.length)
     rows.push({
@@ -494,6 +498,12 @@ function renderJunctions(events: JunctionEvent[]): string[] {
       label: "Dropped",
       value: names(dropped, c.dropped),
       color: c.dropped,
+    });
+  if (recreated.length)
+    rows.push({
+      label: "Recreated",
+      value: names(recreated, c.changed),
+      color: c.changed,
     });
   return [sectionHeader("JUNCTIONS"), ...treeRows(rows)];
 }
