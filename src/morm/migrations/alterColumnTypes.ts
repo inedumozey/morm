@@ -348,7 +348,7 @@ export async function alterColumnTypes(opts: {
 
     const typeSql = renderTypeSql(desiredForSQL);
     await client.query(
-      `ALTER TABLE ${q(table)} ALTER COLUMN ${q(col.name)} TYPE ${typeSql} USING NULL::${typeSql}`,
+      `ALTER TABLE ${q(table)} ALTER COLUMN ${q(col.name)} TYPE ${typeSql} USING ${q(col.name)}::${typeSql}`,
     );
 
     typePairs.push({ col: col.name, from: currentFull, to: desiredFull });

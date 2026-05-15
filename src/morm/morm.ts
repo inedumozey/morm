@@ -11,6 +11,9 @@ import { resetDatabase } from "./migrations/resetDatabase.js";
 import { tableMigrations } from "./migrations/tableMigrations.js";
 import { renderJunctionBuilder } from "./utils/junctionBuilder.js";
 import { reporter } from "./utils/migrationReporter.js";
+import type { SanitizeConfig } from "./utils/sanitize.js";
+import { runCreate } from "./query/create.js";
+import type { CreateClause } from "./query/index.js";
 
 export interface TransactionOptions {
   maxWait?: number;
@@ -20,16 +23,17 @@ export interface TransactionOptions {
 export interface MormOptions {
   allowSSL?: boolean;
   transaction?: TransactionOptions;
+  sanitize?: SanitizeConfig;
 }
 
 export class Morm {
   private pool!: InstanceType<typeof Pool>;
-  private url!: URL;
   private options?: MormOptions | undefined;
   private models: any[] = [];
   private modelMap = new Map<string, any>(); // fix #7 — lookup by table name
   private _migrating: boolean = false;
   private enumRegistry = new EnumRegistry();
+  private _sanitize: SanitizeConfig | undefined = undefined;
 
   /* --------------------------------------------------
    * Instance cache — keyed by host+port+dbname only,
@@ -37,6 +41,29 @@ export class Morm {
    * -------------------------------------------------- */
   private static instances: Map<string, Morm> = new Map();
   private constructor() {}
+
+  /* --------------------------------------------------
+   * PROXY — enables morm.users.create() syntax
+   * -------------------------------------------------- */
+  static wrap(instance: Morm): Morm {
+    return new Proxy(instance, {
+      get(target, prop) {
+        if (typeof prop === "string" && !Reflect.has(target, prop)) {
+          return new Proxy(
+            {},
+            {
+              get(_, method) {
+                const client = target.pool;
+                const tableQuery = target.buildTableQuery(prop, client);
+                return (tableQuery as any)[method as string];
+              },
+            },
+          );
+        }
+        return Reflect.get(target, prop);
+      },
+    });
+  }
 
   private static cacheKey(url: URL): string {
     const port = url.port || "5432";
@@ -58,8 +85,8 @@ export class Morm {
     }
 
     const instance = new Morm();
-    instance.url = parsedUrl;
     instance.options = options;
+    instance._sanitize = options?.sanitize;
 
     const dbName = parsedUrl.pathname.slice(1);
     const host = parsedUrl.hostname;
@@ -89,9 +116,10 @@ export class Morm {
     client.release();
 
     instance.pool = new Pool({ connectionString, ssl });
-    this.instances.set(key, instance);
+    const wrapped = Morm.wrap(instance);
+    this.instances.set(key, wrapped as any);
 
-    return instance;
+    return wrapped;
   }
   /* --------------------------------------------------
    * TRANSACTION
@@ -110,7 +138,27 @@ export class Morm {
       await client.query("BEGIN");
       await client.query(`SET LOCAL lock_timeout = '${maxWait}ms'`);
       await client.query(`SET LOCAL statement_timeout = '${timeout}ms'`);
-      const result = await fn(client);
+      const self = this;
+      const db = new Proxy(
+        {},
+        {
+          get(_, prop) {
+            if (typeof prop === "string") {
+              return new Proxy(
+                {},
+                {
+                  get(__, method) {
+                    const tableQuery = self.buildTableQuery(prop, client);
+                    return (tableQuery as any)[method as string];
+                  },
+                },
+              );
+            }
+          },
+        },
+      );
+      const result = await fn(db);
+
       await client.query("COMMIT");
       return result;
     } catch (err) {
@@ -153,12 +201,12 @@ export class Morm {
   /* --------------------------------------------------
    * MODEL — fix #3 (indexes type) + fix #7 (modelMap)
    * -------------------------------------------------- */
-  model(config: {
+  model<T extends Record<string, any> = Record<string, any>>(config: {
     table: string;
     columns: ColumnDefinition[];
     indexes?: readonly IndexDefinition[];
-    sanitize?: boolean | "strict";
-    primaryKey?: string[]; // composite key
+    sanitize?: SanitizeConfig;
+    primaryKey?: string[];
   }) {
     const normalizedColumns = config.columns.map((col) => {
       const out: any = { ...col };
@@ -194,6 +242,33 @@ export class Morm {
    * -------------------------------------------------- */
   getModel(table: string) {
     return this.modelMap.get(table);
+  }
+
+  /* --------------------------------------------------
+   * GLOBAL SANITIZE — for query layer
+   * -------------------------------------------------- */
+  getSanitize(): SanitizeConfig | undefined {
+    return this._sanitize;
+  }
+
+  /* --------------------------------------------------
+   * QUERY PROXY — builds query object for a table
+   * -------------------------------------------------- */
+  private buildTableQuery<T extends Record<string, any> = Record<string, any>>(
+    table: string,
+    client: any,
+  ) {
+    const model = this.modelMap.get(table);
+    if (!model) throw new Error(`Table "${table}" is not registered`);
+    const globalSanitize = this._sanitize;
+
+    return {
+      create: (
+        clause: Omit<CreateClause, "data"> & {
+          data: Partial<T> | Partial<T>[];
+        },
+      ) => runCreate(client, model, clause as CreateClause, globalSanitize),
+    };
   }
 
   /* --------------------------------------------------
@@ -293,6 +368,10 @@ export class Morm {
 
       /* Table migrations — returns set of newly created tables */
       const createdTables = await tableMigrations(client, this.models);
+      if (createdTables === false) {
+        await client.query("ROLLBACK");
+        return;
+      }
 
       /* Junction tables */
       await renderJunctionBuilder(client, this.models);

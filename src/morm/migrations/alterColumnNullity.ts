@@ -55,6 +55,18 @@ export async function alterColumnNullity(opts: {
         });
         return { ok: false };
       }
+
+      /* Fill existing NULL values with the column default */
+      if (tableHasData && col.default !== undefined) {
+        const { buildDefaultSQL } = await import("../sql/buildDefaultSQL.js");
+        const defaultSQL = buildDefaultSQL(col);
+        if (defaultSQL) {
+          await client.query(
+            `UPDATE ${q(table)} SET ${q(col.name)} = ${defaultSQL} WHERE ${q(col.name)} IS NULL`,
+          );
+        }
+      }
+
       await client.query(
         `ALTER TABLE ${q(table)} ALTER COLUMN ${q(col.name)} SET NOT NULL`,
       );

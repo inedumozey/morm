@@ -121,7 +121,7 @@ export async function diffTable(
   });
   if (!fkDropRes.ok) return false;
 
-  /* 3. Column types — uses full processed (identity cols can change type) */
+  /* 4. Column types — uses full processed (identity cols can change type) */
   const typeRes = await alterColumnTypes({
     client,
     table: config.table,
@@ -131,7 +131,7 @@ export async function diffTable(
   });
   if (!typeRes.ok) return false;
 
-  /* 4. FK references — runs before nullity/unique so implied constraints
+  /* 5. FK references — runs before nullity/unique so implied constraints
         from ONE-TO-ONE relations don't produce spurious NOT NULL / UNIQUE reports */
   const fkRes = await alterColumnReferences({
     client,
@@ -141,7 +141,17 @@ export async function diffTable(
   });
   if (!fkRes.ok) return false;
 
-  /* 5. Nullity — skip columns whose NOT NULL was implied by a FK that just
+  /* 6. Defaults — uses full processed */
+  const defRes = await alterColumnDefault({
+    client,
+    table: config.table,
+    existing,
+    processed,
+    counts,
+  });
+  if (!defRes.ok) return false;
+
+  /* 7. Nullity — skip columns whose NOT NULL was implied by a FK that just
         changed (added or dropped) this same migration run */
   const nullRes = await alterColumnNullity({
     client,
@@ -154,7 +164,7 @@ export async function diffTable(
   });
   if (!nullRes.ok) return false;
 
-  /* 6. Unique — same skip logic as nullity */
+  /* 8. Unique — same skip logic as nullity */
   /* Only skip ONE-TO-ONE FK columns — they own their own UNIQUE */
   const oneToOneAddedCols = new Set(
     [...fkRes.addedFkCols].filter((colName) => {
@@ -173,22 +183,13 @@ export async function diffTable(
   });
   if (!uniqRes.ok) return false;
 
-  /* 7. Check constraints — uses full processed */
+  /* 9. Check constraints — uses full processed */
   const checkRes = await alterColumnCheck({
     client,
     table: config.table,
     processed,
   });
   if (!checkRes.ok) return false;
-
-  /* 8. Defaults — uses full processed */
-  const defRes = await alterColumnDefault({
-    client,
-    table: config.table,
-    existing,
-    processed,
-  });
-  if (!defRes.ok) return false;
 
   return true;
 }

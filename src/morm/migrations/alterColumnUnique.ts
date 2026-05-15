@@ -10,7 +10,7 @@ function q(n: string) {
 }
 
 function isAllowedUniqueDefault(def: any): boolean {
-  if (def === null) return true;
+  if (def === null || def === undefined) return true;
   if (typeof def !== "string") return false;
   const v = def.trim().toLowerCase();
   return v === "int()" || v === "uuid()";

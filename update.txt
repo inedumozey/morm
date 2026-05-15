@@ -1,0 +1,173 @@
+Here is the complete update summary:
+
+MORM update Query
+Signature
+tsModel.update(clause)
+Single object argument containing where, data, and options.
+
+Basic Usage
+ts// Update all rows
+morm.user.update({
+  data: { role: "STAFF" }
+})
+
+// Update specific rows
+morm.user.update({
+  where: { id: 1 },
+  data: { name: "Moses Updated" }
+})
+
+where — Conditions
+Same as find — all operators apply:
+ts// Basic
+morm.user.update({
+  where: { active: true },
+  data: { role: "STAFF" }
+})
+
+// Operators
+morm.user.update({
+  where: { age: { gte: 18 }, role: { not: "ADMIN" } },
+  data: { status: "ACTIVE" }
+})
+
+// OR
+morm.user.update({
+  where: { or: [{ role: "ADMIN" }, { role: "STAFF" }] },
+  data: { active: false }
+})
+
+// Null check
+morm.user.update({
+  where: { deleted_at: null },
+  data: { status: "ACTIVE" }
+})
+
+// Range
+morm.user.update({
+  where: { age: { gte: 18, lte: 65 } },
+  data: { eligible: true }
+})
+
+// Text search
+morm.user.update({
+  where: { name: { contains: "mos" } },
+  data: { verified: true }
+})
+
+// Array column
+morm.user.update({
+  where: { tags: { hasAny: ["javascript"] } },
+  data: { active: true }
+})
+
+// Nested
+morm.user.update({
+  where: { active: true, or: [{ role: "ADMIN" }, { role: "STAFF" }] },
+  data: { verified: true }
+})
+
+data — What to Update
+ts// Single field
+morm.user.update({
+  where: { id: 1 },
+  data: { name: "Moses" }
+})
+
+// Multiple fields
+morm.user.update({
+  where: { id: 1 },
+  data: { name: "Moses", role: "ADMIN", active: true }
+})
+
+include — Projection
+ts// Return specific columns after update
+morm.user.update({
+  where: { id: 1 },
+  data: { name: "Moses" },
+  include: { id: true, name: true }
+})
+
+// All columns — empty include
+morm.user.update({
+  where: { id: 1 },
+  data: { name: "Moses" },
+  include: {}
+})
+
+// With relation
+morm.user.update({
+  where: { id: 1 },
+  data: { name: "Moses" },
+  include: {
+    id: true,
+    name: true,
+    profile: true,
+    // profile: { include: { id: true, avatar: true } }
+  }
+})
+
+exclude — Projection
+ts// All columns except these
+morm.user.update({
+  where: { id: 1 },
+  data: { name: "Moses" },
+  exclude: { password: true, secret: true }
+})
+Preference order: include > exclude > all columns
+
+sanitize
+tsmorm.user.update({
+  where: { id: 1 },
+  data: { name: "  MOSES  ", bio: "<b>hello</b>" },
+  sanitize: { trim: true, case: "lower", clean: "strict" }
+})
+
+Return Values
+ts// No include/exclude — count only
+{ count: 1 }
+{ count: 5 }
+
+// With include — specific columns
+{ id: "uuid", name: "Moses" }               // single row updated
+[{ id: "uuid", name: "Moses" }, ...]        // multiple rows updated
+
+// With exclude — all except specified
+{ id: "uuid", name: "Moses", email: "..." }
+
+// With empty include — all columns
+{ id: "uuid", name: "Moses", email: "...", created_at: ... }
+
+Inside Transaction
+tsawait morm.transaction(async (db) => {
+  await db.user.update({
+    where: { id: 1 },
+    data: { active: false }
+  })
+
+  await db.post.update({
+    where: { or: [{ status: "draft" }, { status: "pending" }] },
+    data: { status: "archived" }
+  })
+})
+
+Complete Example
+tsmorm.user.update({
+  where: {
+    active: true,
+    age: { gte: 18 },
+    or: [{ role: "ADMIN" }, { role: "STAFF" }]
+  },
+  data: {
+    verified: true,
+    updated_at: new Date()
+  },
+  include: {
+    id: true,
+    name: true,
+    profile: {
+      include: { avatar: true }
+    }
+  },
+  sanitize: { trim: true, case: "lower" }
+})

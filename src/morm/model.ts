@@ -5,10 +5,10 @@ import { validateColumnType } from "./utils/validateColumnType.js";
 import { indexMigrations } from "./migrations/indexMigrations.js";
 import { buildColumnSQL } from "./sql/buildColumnSQL.js";
 import { diffTable } from "./migrations/diffTable.js";
-import { sanitizeText, shouldSanitize } from "./utils/sanitize.js";
+import { sanitizeText, resolveSanitize } from "./utils/sanitize.js";
+import type { SanitizeConfig } from "./utils/sanitize.js";
 import type { ColumnDefinition } from "./model-types.js";
 import type { IndexDefinition } from "./migrations/indexMigrations.js";
-import { parseCheck } from "./utils/checkParser.js";
 import { normalizeRelation } from "./utils/relationValidator.js";
 import { reporter } from "./utils/migrationReporter.js";
 
@@ -19,7 +19,7 @@ export function createModelRuntime(
     columns: readonly ColumnDefinition[];
     indexes?: readonly IndexDefinition[] | undefined;
     primaryKey?: string[];
-    sanitize?: boolean | "strict";
+    sanitize?: SanitizeConfig;
   },
 ) {
   const userDefinedCreatedAt = config.columns.some(
@@ -40,7 +40,7 @@ export function createModelRuntime(
     __isArray?: boolean;
     __arrayInner?: string | null;
     __virtual?: boolean;
-    sanitize?: boolean | "strict";
+    sanitize?: SanitizeConfig;
     __isEnum?: boolean;
     __enumName?: string;
     __enumValuesLower?: Set<string>;
@@ -178,6 +178,27 @@ export function createModelRuntime(
     );
   }
 
+  /* UNIQUE WITH STATIC DEFAULT ---------------------------------------------------- */
+  for (const c of processed) {
+    if (c.unique && c.default !== undefined && !c.__primary) {
+      const def =
+        typeof c.default === "string"
+          ? c.default.trim().toLowerCase()
+          : c.default;
+      if (
+        def !== "uuid()" &&
+        def !== "int()" &&
+        def !== "smallint()" &&
+        def !== "bigint()" &&
+        def !== null
+      ) {
+        validationMessages.push(
+          `Column "${c.name}" is UNIQUE but has a static default "${c.default}" — every row without an explicit value will collide. Use uuid(), int(), smallint(), bigint(), or null instead, or remove the default`,
+        );
+      }
+    }
+  }
+
   /* NO PRIMARY KEY ---------------------------------------------------------------- */
   const hasPrimaryKey = processed.some((c) => c.__primary);
   if (!hasPrimaryKey) {
@@ -262,20 +283,27 @@ export function createModelRuntime(
     } catch {}
   }
 
-  function sanitizeRow(data: Record<string, any>) {
+  function sanitizeRow(
+    data: Record<string, any>,
+    querySanitize?: SanitizeConfig,
+  ) {
     const out = { ...data };
     for (const col of processed) {
-      const mode = shouldSanitize(config.sanitize ?? false, col.sanitize);
-      if (!mode || !(col.name in out)) continue;
+      const resolved = resolveSanitize(
+        undefined, // global level — handled at query layer
+        config.sanitize, // schemal level
+        col.sanitize, // column level
+        querySanitize, // query level
+      );
+      if (!resolved || !(col.name in out)) continue;
 
       const type = String(col.type).toUpperCase();
       if (type === "TEXT" || type.startsWith("VARCHAR") || type === "CHAR") {
-        out[col.name] = sanitizeText(out[col.name], mode);
+        out[col.name] = sanitizeText(out[col.name], resolved);
       }
     }
     return out;
   }
-
   const primaryKey: string | string[] = config.primaryKey?.length
     ? config.primaryKey
     : (processed.find((c) => c.__primary)?.name ?? "id");
@@ -301,7 +329,8 @@ export function createModelRuntime(
           },
           processed,
         );
-        if (!ok) return false;
+        if (!ok)
+          throw new Error(`Migration failed for table "${config.table}"`);
 
         await ensureUpdatedAtTrigger(client);
 
