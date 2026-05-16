@@ -24,8 +24,11 @@ export interface MormOptions {
   allowSSL?: boolean;
   transaction?: TransactionOptions;
   sanitize?: SanitizeConfig;
+  generate?: {
+    output: string;
+    module: string;
+  };
 }
-
 export class Morm {
   private pool!: InstanceType<typeof Pool>;
   private options?: MormOptions | undefined;
@@ -124,8 +127,8 @@ export class Morm {
   /* --------------------------------------------------
    * TRANSACTION
    * -------------------------------------------------- */
-  async transaction<T>(
-    fn: (client: any) => Promise<T>,
+  async transaction<T, TDb extends object = Record<string, any>>(
+    fn: (db: TDb) => Promise<T>,
     config: Partial<TransactionOptions> = {},
   ) {
     const client = await this.pool.connect();
@@ -139,24 +142,21 @@ export class Morm {
       await client.query(`SET LOCAL lock_timeout = '${maxWait}ms'`);
       await client.query(`SET LOCAL statement_timeout = '${timeout}ms'`);
       const self = this;
-      const db = new Proxy(
-        {},
-        {
-          get(_, prop) {
-            if (typeof prop === "string") {
-              return new Proxy(
-                {},
-                {
-                  get(__, method) {
-                    const tableQuery = self.buildTableQuery(prop, client);
-                    return (tableQuery as any)[method as string];
-                  },
+      const db = new Proxy({} as TDb, {
+        get(_, prop) {
+          if (typeof prop === "string") {
+            return new Proxy(
+              {},
+              {
+                get(__, method) {
+                  const tableQuery = self.buildTableQuery(prop, client);
+                  return (tableQuery as any)[method as string];
                 },
-              );
-            }
-          },
+              },
+            );
+          }
         },
-      );
+      });
       const result = await fn(db);
 
       await client.query("COMMIT");
@@ -277,7 +277,6 @@ export class Morm {
   async migrate(option?: { reset?: boolean }) {
     if (this._migrating) return false;
     this._migrating = true;
-
     const options = { reset: false, ...option };
 
     /* ---- PHASE 1 — Pre-flight ---- */
@@ -319,8 +318,9 @@ export class Morm {
         });
       }
       reporter.render();
+      reporter.reset();
       this._migrating = false;
-      return false;
+      return true;
     }
 
     if (relRes.sorted) this.models = relRes.sorted;
@@ -396,6 +396,20 @@ export class Morm {
     reporter.render();
     reporter.reset();
     this._migrating = false;
+
+    if (process.env.NODE_ENV !== "production" && this.options?.generate) {
+      console.log("generating types...", this.options.generate);
+      const { generateTypes } = await import("./utils/generateTypes.js");
+      const { resolve } = await import("path");
+      const { output, module: modulePath } = this.options.generate;
+      generateTypes(
+        this.models,
+        this.enumRegistry.all(),
+        modulePath,
+        resolve(output),
+      );
+    }
+
     return true;
   }
 }

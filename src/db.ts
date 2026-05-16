@@ -1,19 +1,15 @@
 // db.ts
 
 import { Morm } from "./morm/morm.js";
-type UserType = {
-  name?: string;
-  id?: string;
-  account_number?: number;
-  class?: string;
-  initials?: string;
-  friends?: any;
-};
 
 const morm = async (db_url: string) => {
   try {
     const morm = await Morm.init(db_url, {
       transaction: { maxWait: 5000, timeout: 10000 },
+      generate: {
+        output: "./src",
+        module: "./morm/morm.js",
+      },
     });
     console.log("Database connected!");
 
@@ -22,43 +18,6 @@ const morm = async (db_url: string) => {
     ]);
 
     morm!.model({
-      table: "country_language",
-      primaryKey: ["country_codes", "currency_cod", "language_code"],
-      columns: [
-        { name: "country_codes", type: "text" },
-        { name: "language_code", type: "text" },
-        { name: "currency_cod", type: "text" },
-        { name: "is_official", type: "boolean", default: false },
-      ],
-    });
-
-    morm!.model({
-      table: "post",
-      sanitize: { case: "upper", trim: true, clean: "basic" },
-      columns: [
-        { name: "id", type: "uuid", primary: true, default: "uuid()" },
-        {
-          name: "title",
-          type: "text",
-          sanitize: { case: "upper", trim: true, clean: "basic" },
-        },
-        {
-          name: "tag_ids",
-          type: "uuid[]",
-          references: { table: "tag", column: "id", relation: "mm" },
-        },
-      ],
-    });
-
-    morm!.model({
-      table: "tag",
-      columns: [
-        { name: "id", type: "uuid", primary: true, default: "uuid()" },
-        { name: "name", type: "text" },
-      ],
-    });
-
-    const User = morm!.model({
       table: "user",
       columns: [
         { name: "id", type: "uuid", primary: true, default: "uuid()" },
@@ -84,6 +43,21 @@ const morm = async (db_url: string) => {
         },
       ],
     });
+
+    morm!.model({
+      table: "profile",
+      columns: [
+        { name: "id", type: "uuid", primary: true, default: "uuid()" },
+        { name: "fullname", type: "text", notNull: true },
+        {
+          name: "profile_image",
+          type: "text",
+        },
+      ],
+    });
+
+    await morm?.migrate();
+    // await morm?.migrate({ reset: true });
 
     return morm;
   } catch (err) {
