@@ -8,8 +8,8 @@ const morm = async (db_url: string) => {
       transaction: { maxWait: 5000, timeout: 10000 },
       generate: {
         output: "./src",
-        module: "./morm/morm.js",
       },
+      debug: true,
     });
     console.log("Database connected!");
 
@@ -20,27 +20,36 @@ const morm = async (db_url: string) => {
     morm!.model({
       table: "user",
       columns: [
-        { name: "id", type: "uuid", primary: true, default: "uuid()" },
-        { name: "name", type: "text" },
+        {
+          name: "id",
+          type: "uuid",
+          primary: true,
+          default: "uuid()",
+        },
+        {
+          name: "username",
+          type: "text",
+          unique: true,
+          sanitize: { trim: true },
+        },
+        {
+          name: "email",
+          type: "text",
+          unique: true,
+          sanitize: { trim: true, case: "lower" },
+        },
         {
           name: "account_number",
           type: "INT",
-          unique: true,
-          notNull: true,
+          sanitize: { trim: true },
         },
-        { name: "class", type: "text", unique: true },
-        { name: "initials", type: "VARCHAR(4)", notNull: true, default: "er" },
         {
-          name: "friends",
-          type: "uuid[]",
-          references: {
-            table: "user",
-            column: "id",
-            relation: "mm",
-            onDelete: "RESTRICT",
-            onUpdate: "NO ACTION",
-          },
+          name: "initials",
+          type: "VARCHAR(4)",
+          default: "Mr.",
+          sanitize: { trim: true },
         },
+        { name: "state", type: "text" },
       ],
     });
 
@@ -49,14 +58,20 @@ const morm = async (db_url: string) => {
       columns: [
         { name: "id", type: "uuid", primary: true, default: "uuid()" },
         { name: "fullname", type: "text", notNull: true },
+        { name: "avatar", type: "text" },
         {
-          name: "profile_image",
-          type: "text",
+          name: "user_id",
+          type: "uuid",
+          references: {
+            table: "user",
+            column: "id",
+            relation: "nn",
+          },
         },
       ],
     });
 
-    await morm?.migrate();
+    // await morm?.migrate();
     // await morm?.migrate({ reset: true });
 
     return morm;

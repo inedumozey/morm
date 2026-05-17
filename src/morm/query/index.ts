@@ -90,7 +90,7 @@ export interface FindClause {
   orderBy?: OrderByClause;
   take?: number;
   page?: number;
-  after?: string;
+  after?: Record<string, string | number>;
   distinct?: DistinctClause;
   count?: boolean;
   sum?: string;

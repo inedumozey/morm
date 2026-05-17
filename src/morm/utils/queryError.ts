@@ -62,12 +62,21 @@ export class MormError extends Error {
 
   constructor(pgError: any, operation: QueryOperation, table?: string) {
     const code = pgError.code ?? "UNKNOWN";
-    const column = pgError.column ?? undefined;
+    let column = pgError.column ?? undefined;
     const detail = pgError.detail ?? undefined;
 
-    const baseMessage = PG_ERROR_MAP[code] ?? pgError.message ?? "Query failed";
+    // Extract column from detail for unique constraint violations
+    if (!column && code === "23505" && detail) {
+      const match = detail.match(/Key \((.+?)\)=/);
+      if (match) column = match[1];
+    }
+
+    let baseMessage = PG_ERROR_MAP[code] ?? pgError.message ?? "Query failed";
+    if (code === "42P01" && table)
+      baseMessage = `Table "${table}" does not exist`;
     const columnPart = column ? ` on column "${column}"` : "";
-    const tablePart = table ? ` on table "${table}"` : "";
+    const tablePart =
+      table && !columnPart && code !== "42P01" ? ` on table "${table}"` : "";
 
     super(`${baseMessage}${columnPart}${tablePart}`);
 

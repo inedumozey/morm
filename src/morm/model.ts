@@ -314,7 +314,7 @@ export function createModelRuntime(
     columns: processed,
     indexes: config.indexes ?? [],
     sql: { create: createTableSQL, columns: columnsSQL },
-    sanitize: config.sanitize ?? false,
+    sanitize: config.sanitize ?? undefined,
     sanitizeRow,
 
     async migrate(client: any, createdTables?: Set<string>) {

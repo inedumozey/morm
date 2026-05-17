@@ -13,7 +13,8 @@ import { renderJunctionBuilder } from "./utils/junctionBuilder.js";
 import { reporter } from "./utils/migrationReporter.js";
 import type { SanitizeConfig } from "./utils/sanitize.js";
 import { runCreate } from "./query/create.js";
-import type { CreateClause } from "./query/index.js";
+import type { CreateClause, FindClause, FindOneClause } from "./query/index.js";
+import { runFind, runFindOne } from "./query/find.js";
 
 export interface TransactionOptions {
   maxWait?: number;
@@ -26,8 +27,8 @@ export interface MormOptions {
   sanitize?: SanitizeConfig;
   generate?: {
     output: string;
-    module: string;
   };
+  debug?: boolean;
 }
 export class Morm {
   private pool!: InstanceType<typeof Pool>;
@@ -127,7 +128,7 @@ export class Morm {
   /* --------------------------------------------------
    * TRANSACTION
    * -------------------------------------------------- */
-  async transaction<T, TDb extends object = Record<string, any>>(
+  async transaction<T, TDb extends object = MormDB>(
     fn: (db: TDb) => Promise<T>,
     config: Partial<TransactionOptions> = {},
   ) {
@@ -260,14 +261,21 @@ export class Morm {
   ) {
     const model = this.modelMap.get(table);
     if (!model) throw new Error(`Table "${table}" is not registered`);
+
     const globalSanitize = this._sanitize;
+    const debug = this.options?.debug ?? false;
 
     return {
       create: (
         clause: Omit<CreateClause, "data"> & {
           data: Partial<T> | Partial<T>[];
         },
-      ) => runCreate(client, model, clause as CreateClause, globalSanitize),
+      ) =>
+        runCreate(client, model, clause as CreateClause, globalSanitize, debug),
+      find: (clause?: FindClause) =>
+        runFind(client, model, clause, globalSanitize, debug),
+      findOne: (clause?: FindOneClause) =>
+        runFindOne(client, model, clause, globalSanitize, debug),
     };
   }
 
@@ -398,10 +406,13 @@ export class Morm {
     this._migrating = false;
 
     if (process.env.NODE_ENV !== "production" && this.options?.generate) {
-      console.log("generating types...", this.options.generate);
       const { generateTypes } = await import("./utils/generateTypes.js");
+
       const { resolve } = await import("path");
-      const { output, module: modulePath } = this.options.generate;
+      const { output } = this.options.generate;
+      const modulePath = import.meta.url.includes("node_modules")
+        ? "morm"
+        : "./morm/morm.js";
       generateTypes(
         this.models,
         this.enumRegistry.all(),
