@@ -74,7 +74,16 @@ export class MormError extends Error {
     let baseMessage = PG_ERROR_MAP[code] ?? pgError.message ?? "Query failed";
     if (code === "42P01" && table)
       baseMessage = `Table "${table}" does not exist`;
-    const columnPart = column ? ` on column "${column}"` : "";
+    const skipColumnPart = [
+      "MORM_INVALID_OPERATOR",
+      "MORM_INVALID_CURSOR",
+      "MORM_INVALID_COLUMN",
+      "MORM_INVALID_VALUE",
+      "MORM_NON_UNIQUE_WHERE",
+      "MORM_INVALID_DATA",
+    ].includes(code);
+    const columnPart =
+      column && !skipColumnPart ? ` on column "${column}"` : "";
     const tablePart =
       table && !columnPart && code !== "42P01" ? ` on table "${table}"` : "";
 

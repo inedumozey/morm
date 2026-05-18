@@ -16,12 +16,44 @@ export interface ScalarOperators {
   contains?: string;
   startsWith?: string;
   endsWith?: string;
+  notContains?: string;
+  notStartsWith?: string;
+  notEndsWith?: string;
+  mode?: Mode;
 }
 
 export interface ArrayOperators {
   hasAny?: (string | number | boolean)[];
-  hasAll?: (string | number | boolean)[];
+  hasEvery?: (string | number | boolean)[];
 }
+
+/* ===================================================== */
+/* SORTING / DISTINCT                                    */
+/* ===================================================== */
+
+export type SortDirection = "asc" | "desc" | "ASC" | "DESC";
+
+export type Mode = "sensitive" | "insensitive";
+
+export type TextOperators = Pick<
+  ScalarOperators,
+  | "eq"
+  | "not"
+  | "contains"
+  | "startsWith"
+  | "endsWith"
+  | "notContains"
+  | "notStartsWith"
+  | "notEndsWith"
+  | "mode"
+>;
+
+export type NumberOperators = Pick<
+  ScalarOperators,
+  "eq" | "not" | "gt" | "gte" | "lt" | "lte" | "mode"
+>;
+
+export type BooleanOperators = Pick<ScalarOperators, "eq" | "not">;
 
 export type ColumnCondition =
   | string
@@ -31,82 +63,87 @@ export type ColumnCondition =
   | ScalarOperators
   | ArrayOperators;
 
-export type WhereClause = {
-  and?: WhereClause[];
-  or?: WhereClause[];
-  [column: string]: ColumnCondition | WhereClause[] | undefined;
+export type WhereClause<T = Record<string, any>> = {
+  and?: WhereClause<T>[];
+  or?: WhereClause<T>[];
+} & {
+  [K in keyof T]?: NonNullable<T[K]> extends any[]
+    ? ArrayOperators | null
+    : NonNullable<T[K]> extends boolean
+      ? BooleanOperators | boolean | null
+      : NonNullable<T[K]> extends number
+        ? NumberOperators | number | null
+        : NonNullable<T[K]> extends string
+          ? TextOperators | string | null
+          : ColumnCondition | null;
 };
 
 /* ===================================================== */
 /* INCLUDE / PROJECTION                                   */
 /* ===================================================== */
 
-export interface RelationInclude {
-  where?: WhereClause;
-  include?: IncludeClause;
-  exclude?: ExcludeClause;
-  orderBy?: OrderByClause;
+export interface RelationInclude<T = Record<string, any>> {
+  where?: WhereClause<T>;
+  include?: IncludeClause<T>;
+  exclude?: ExcludeClause<T>;
+  orderBy?: OrderByClause<T>;
   take?: number;
   page?: number;
-  after?: string;
-  distinct?: DistinctClause;
+  after?: { [K in keyof T]?: string | number | null };
+  distinct?: DistinctClause<T>;
   count?: boolean;
-  sum?: string;
-  avg?: string;
-  min?: string;
-  max?: string;
+  sum?: keyof T & string;
+  avg?: keyof T & string;
+  min?: keyof T & string;
+  max?: keyof T & string;
+  mode?: Mode;
 }
 
-export type IncludeClause = {
-  [column: string]: true | RelationInclude;
+export type IncludeClause<T = Record<string, any>> = {
+  [K in keyof T]?: true | RelationInclude<T>;
 };
 
-export type ExcludeClause = {
-  [column: string]: true;
+export type ExcludeClause<T = Record<string, any>> = {
+  [K in keyof T]?: true;
 };
 
-/* ===================================================== */
-/* SORTING / DISTINCT                                    */
-/* ===================================================== */
-
-export type SortDirection = "asc" | "desc" | "ASC" | "DESC";
-
-export type OrderByClause = {
-  [column: string]: SortDirection;
+export type OrderByClause<T = Record<string, any>> = {
+  [K in keyof T]?: SortDirection;
 };
 
-export type DistinctClause = {
-  [column: string]: true;
+export type DistinctClause<T = Record<string, any>> = {
+  [K in keyof T]?: true;
 };
 
 /* ===================================================== */
 /* FIND                                                  */
 /* ===================================================== */
 
-export interface FindClause {
-  where?: WhereClause;
-  include?: IncludeClause;
-  exclude?: ExcludeClause;
-  orderBy?: OrderByClause;
+export interface FindClause<T = Record<string, any>> {
+  where?: WhereClause<T>;
+  include?: IncludeClause<T>;
+  exclude?: ExcludeClause<T>;
+  orderBy?: OrderByClause<T>;
   take?: number;
   page?: number;
-  after?: Record<string, string | number>;
-  distinct?: DistinctClause;
+  after?: { [K in keyof T]?: string | number | null };
+  distinct?: DistinctClause<T>;
   count?: boolean;
-  sum?: string;
-  avg?: string;
-  min?: string;
-  max?: string;
+  sum?: keyof T & string;
+  avg?: keyof T & string;
+  min?: keyof T & string;
+  max?: keyof T & string;
+  mode?: Mode;
 }
 
 /* ===================================================== */
 /* FIND ONE                                              */
 /* ===================================================== */
 
-export interface FindOneClause {
-  where?: WhereClause;
-  include?: IncludeClause;
-  exclude?: ExcludeClause;
+export interface FindOneClause<T = Record<string, any>> {
+  where?: WhereClause<T>;
+  include?: IncludeClause<T>;
+  exclude?: ExcludeClause<T>;
 }
 
 /* ===================================================== */
@@ -129,11 +166,12 @@ export interface CreateClause<
   T extends Record<string, any> = Record<string, any>,
 > {
   data: Partial<T> | Partial<T>[];
-  include?: IncludeClause;
-  exclude?: ExcludeClause;
+  include?: IncludeClause<T>;
+  exclude?: ExcludeClause<T>;
   skipDuplicates?: boolean;
   sanitize?: SanitizeConfig;
 }
+
 export interface CreateResult {
   count: number;
 }
@@ -142,11 +180,11 @@ export interface CreateResult {
 /* UPDATE                                                */
 /* ===================================================== */
 
-export interface UpdateClause {
-  where?: WhereClause;
-  data: Record<string, any>;
-  include?: IncludeClause;
-  exclude?: ExcludeClause;
+export interface UpdateClause<T = Record<string, any>> {
+  where?: WhereClause<T>;
+  data: Partial<T>;
+  include?: IncludeClause<T>;
+  exclude?: ExcludeClause<T>;
   sanitize?: SanitizeConfig;
 }
 
@@ -187,7 +225,7 @@ export function isOptionsObject(obj: Record<string, any>): boolean {
   return Object.keys(normalized).some((k) => FIND_OPTION_KEYS.has(k));
 }
 
-export function hasAggregation(clause: FindClause): boolean {
+export function hasAggregation(clause: FindClause<any>): boolean {
   return !!(
     clause.count ||
     clause.sum ||
@@ -198,8 +236,8 @@ export function hasAggregation(clause: FindClause): boolean {
 }
 
 export function resolveProjection(
-  include?: IncludeClause,
-  exclude?: ExcludeClause,
+  include?: IncludeClause<any>,
+  exclude?: ExcludeClause<any>,
 ): { mode: "include" | "exclude" | "all"; keys: string[] } {
   if (include && Object.keys(include).length > 0) {
     return { mode: "include", keys: Object.keys(include) };

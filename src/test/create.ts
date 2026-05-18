@@ -3,17 +3,47 @@ import type { Morm } from "../morm/morm.js";
 export const testCrteate = async (morm: Morm) => {
   try {
     await morm.transaction(async (trx: Morm) => {
-      const states: string[] = ["Lagos", "Abuja", "Kano", "Rivers", "Oyo"];
+      const data = [
+        {
+          username: "user1",
+          email: "user1@gmail.com",
+          account_number: 1,
+          state: "Lagos",
+          tags: ["javascript", "typescript"],
+        },
+        {
+          username: "user2",
+          email: "user2@gmail.com",
+          account_number: 2,
+          state: "Abuja",
+          tags: ["python", "javascript"],
+        },
+        {
+          username: "user3",
+          email: "user3@gmail.com",
+          account_number: 3,
+          state: "Kano",
+          tags: ["rust", "typescript"],
+        },
+        {
+          username: "user4",
+          email: "user4@gmail.com",
+          account_number: 4,
+          state: "Rivers",
+          tags: ["python", "rust"],
+        },
+        {
+          username: "user5",
+          email: "user5@gmail.com",
+          account_number: 5,
+          state: "Lagos",
+          tags: ["javascript"],
+        },
+      ];
 
-      const data = Array.from({ length: 30 }, (_, i) => ({
-        username: `user${i + 1}`,
-        email: `user${i + 1}@gmail.com`,
-        account_number: i + 1,
-        initials: `U${i + 1}`.slice(0, 4),
-        state: states[i % 5]!,
-      }));
+      const result = await trx.user.create({ data, skipDuplicates: true });
 
-      await trx.user.create({ data, skipDuplicates: true });
+      console.log(result);
     });
   } catch (error) {
     console.error("Failed to connect to the database:", error);

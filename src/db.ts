@@ -29,13 +29,11 @@ const morm = async (db_url: string) => {
         {
           name: "username",
           type: "text",
-          unique: true,
           sanitize: { trim: true },
         },
         {
           name: "email",
           type: "text",
-          unique: true,
           sanitize: { trim: true, case: "lower" },
         },
         {
@@ -50,6 +48,10 @@ const morm = async (db_url: string) => {
           sanitize: { trim: true },
         },
         { name: "state", type: "text" },
+        {
+          name: "tags",
+          type: "text[]",
+        },
       ],
     });
 

@@ -1,20 +1,23 @@
-Migration tests remaining:
+```typescript
 
-✅ Primary key
-✅ Type changes + identity
-✅ Defaults
-✅ Column naming
-✅ Duplicate column names
-✅ Column rename
-✅ NOT NULL add/remove
-✅ UNIQUE add/remove
-✅ Identity protection
-✅ Indexes — single, composite, partial, WHERE update
-✅ Enums
-✅ CHECK constraints — add, update, remove
-✅ Table rename — similarity detection
-✅ Multiple tables — topo-sort, circular reference
-✅ ONE-TO-ONE (nn)
-✅ ONE-TO-MANY (nm)
-MANY-TO-MANY (mm) + junction tables
-Circular reference detection
+const users = await trx.user.find({
+
+        where: {
+
+          and: [{ state: { eq: "lagos" } }, { state: "abuja" }],
+
+        },
+
+        mode: "insensitive",
+
+        include: { username: true, state: true },
+
+        take: 4,
+
+      });
+
+      console.log(users);
+
+these returns [] why bug?
+
+```

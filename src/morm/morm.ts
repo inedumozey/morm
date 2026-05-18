@@ -272,10 +272,9 @@ export class Morm {
         },
       ) =>
         runCreate(client, model, clause as CreateClause, globalSanitize, debug),
-      find: (clause?: FindClause) =>
-        runFind(client, model, clause, globalSanitize, debug),
+      find: (clause?: FindClause) => runFind(client, model, clause, debug),
       findOne: (clause?: FindOneClause) =>
-        runFindOne(client, model, clause, globalSanitize, debug),
+        runFindOne(client, model, clause, undefined, debug),
     };
   }
 

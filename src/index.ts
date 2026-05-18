@@ -19,6 +19,6 @@ const db_url = `postgresql://postgres:postgre@localhost:5432/${db_name}`;
 const morm = await db(db_url);
 
 // testCrteate(morm);
-// testFine(morm);
+testFine(morm);
 
 app.listen(4000, () => console.log("Server running on port 4000"));
