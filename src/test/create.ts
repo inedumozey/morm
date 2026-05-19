@@ -10,6 +10,8 @@ export const testCrteate = async (morm: Morm) => {
           account_number: 1,
           state: "Lagos",
           tags: ["javascript", "typescript"],
+          is_active: true,
+          role: "ADMIN",
         },
         {
           username: "user2",
@@ -17,6 +19,8 @@ export const testCrteate = async (morm: Morm) => {
           account_number: 2,
           state: "Abuja",
           tags: ["python", "javascript"],
+          is_active: false,
+          role: "STAFF",
         },
         {
           username: "user3",
@@ -24,6 +28,8 @@ export const testCrteate = async (morm: Morm) => {
           account_number: 3,
           state: "Kano",
           tags: ["rust", "typescript"],
+          is_active: true,
+          role: "SUPERADMIN",
         },
         {
           username: "user4",
@@ -31,6 +37,8 @@ export const testCrteate = async (morm: Morm) => {
           account_number: 4,
           state: "Rivers",
           tags: ["python", "rust"],
+          is_active: false,
+          role: "MARKED",
         },
         {
           username: "user5",
@@ -38,10 +46,22 @@ export const testCrteate = async (morm: Morm) => {
           account_number: 5,
           state: "Lagos",
           tags: ["javascript"],
+          is_active: true,
+          role: "STAFF",
         },
       ];
-
-      const result = await trx.user.create({ data, skipDuplicates: true });
+      const result = await trx.user.create({
+        data: {
+          username: "user98",
+          email: "user98@gmail.com",
+          account_number: 98,
+          state: "Plateau",
+          tags: ["javascript"],
+          is_active: true,
+          role: "SUPERADMIN",
+        },
+        skipDuplicates: true,
+      });
 
       console.log(result);
     });

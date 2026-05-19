@@ -5,12 +5,10 @@ export const testFine = async (morm: Morm) => {
     await morm.transaction(async (trx) => {
       const users = await trx.user.find({
         where: {
-          and: [{ state: { eq: "lagos" } }, { state: "abuja" }],
+          account_number: { gte: 5, lte: 10 },
         },
-        mode: "insensitive",
-        include: { username: true, state: true },
-        take: 4,
       });
+
       console.log(users);
     });
   } catch (error) {

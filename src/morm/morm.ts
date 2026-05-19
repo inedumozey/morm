@@ -85,7 +85,14 @@ export class Morm {
     const key = Morm.cacheKey(parsedUrl);
 
     if (this.instances.has(key)) {
-      return this.instances.get(key)!;
+      const cached = this.instances.get(key)!;
+      try {
+        const client = await cached.pool.connect();
+        client.release();
+        return cached;
+      } catch {
+        this.instances.delete(key);
+      }
     }
 
     const instance = new Morm();
@@ -125,6 +132,7 @@ export class Morm {
 
     return wrapped;
   }
+
   /* --------------------------------------------------
    * TRANSACTION
    * -------------------------------------------------- */
@@ -327,7 +335,7 @@ export class Morm {
       reporter.render();
       reporter.reset();
       this._migrating = false;
-      return true;
+      return false;
     }
 
     if (relRes.sorted) this.models = relRes.sorted;

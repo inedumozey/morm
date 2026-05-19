@@ -51,9 +51,21 @@ function isManagedJunction(table: string, models: any[]): boolean {
   if (!table.endsWith("_junction")) return false;
   const modelTables = new Set(models.map((m) => m.table));
   const base = table.replace(/_junction$/, "");
-  const parts = base.split("_");
-  if (parts.length !== 2) return false;
-  return modelTables.has(parts[0]) && modelTables.has(parts[1]);
+
+  // Try every underscore position as the split point between the two table names.
+  // e.g. "user_profile_post_junction" → base = "user_profile_post"
+  // tries: "user" + "profile_post", "user_profile" + "post"
+  // keep trying until you find a split where both sides are valid table names in the models.
+  for (let i = 0; i < base.length; i++) {
+    if (base[i] !== "_") continue;
+    const left = base.slice(0, i);
+    const right = base.slice(i + 1);
+    if (left && right && modelTables.has(left) && modelTables.has(right)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function resolveDbType(col: DbColumn): string {

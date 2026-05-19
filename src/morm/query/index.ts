@@ -6,6 +6,22 @@ import type { SanitizeConfig } from "../utils/sanitize.js";
 /* WHERE CONDITIONS                                       */
 /* ===================================================== */
 
+type NumberKeys<T> = {
+  [K in keyof T]: NonNullable<T[K]> extends number ? K : never;
+}[keyof T] &
+  string;
+
+type ComparableKeys<T> = {
+  [K in keyof T]: NonNullable<T[K]> extends boolean
+    ? never
+    : NonNullable<T[K]> extends any[]
+      ? never
+      : NonNullable<T[K]> extends number | Date
+        ? K
+        : never;
+}[keyof T] &
+  string;
+
 export interface ScalarOperators {
   eq?: string | number | boolean;
   not?: string | number | boolean | null;
@@ -92,10 +108,10 @@ export interface RelationInclude<T = Record<string, any>> {
   after?: { [K in keyof T]?: string | number | null };
   distinct?: DistinctClause<T>;
   count?: boolean;
-  sum?: keyof T & string;
-  avg?: keyof T & string;
-  min?: keyof T & string;
-  max?: keyof T & string;
+  sum?: NumberKeys<T>;
+  avg?: NumberKeys<T>;
+  min?: ComparableKeys<T>;
+  max?: ComparableKeys<T>;
   mode?: Mode;
 }
 
@@ -129,10 +145,10 @@ export interface FindClause<T = Record<string, any>> {
   after?: { [K in keyof T]?: string | number | null };
   distinct?: DistinctClause<T>;
   count?: boolean;
-  sum?: keyof T & string;
-  avg?: keyof T & string;
-  min?: keyof T & string;
-  max?: keyof T & string;
+  sum?: NumberKeys<T>;
+  avg?: NumberKeys<T>;
+  min?: ComparableKeys<T>;
+  max?: ComparableKeys<T>;
   mode?: Mode;
 }
 

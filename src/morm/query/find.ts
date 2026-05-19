@@ -1,6 +1,7 @@
 // query/find.ts
 
 import { MormError, throwQueryError } from "../utils/queryError.js";
+import { validateFindClause } from "./validation/findClause.js";
 import {
   normalizeKeys,
   resolveProjection,
@@ -13,6 +14,9 @@ import {
   type OrderByClause,
   type DistinctClause,
 } from "./index.js";
+
+import { validateWhereClause } from "./validation/whereClause.js";
+import { validateColumnExists } from "./validation/queryUtility.js";
 
 /* ===================================================== */
 /* HELPERS                                               */
@@ -36,6 +40,7 @@ function buildWhere(
 ): string {
   const parts: string[] = [];
   const prefix = tableAlias ? `${q(tableAlias)}.` : "";
+  validateFindClause;
 
   for (const [key, value] of Object.entries(where)) {
     const keyLower = key.toLowerCase();
@@ -215,9 +220,11 @@ function buildWhere(
             if (opVal === null) {
               opParts.push(`${col} IS NULL`);
             } else {
+              const fieldMode = (ops as any).mode;
               const isInsensitive =
-                (ops as any).mode === "insensitive" ||
-                queryMode === "insensitive";
+                fieldMode !== undefined
+                  ? fieldMode === "insensitive"
+                  : queryMode === "insensitive";
               params.push(isInsensitive ? String(opVal).toLowerCase() : opVal);
               opParts.push(
                 isInsensitive
@@ -230,9 +237,11 @@ function buildWhere(
             if (opVal === null) {
               opParts.push(`${col} IS NOT NULL`);
             } else {
+              const fieldMode = (ops as any).mode;
               const isInsensitive =
-                (ops as any).mode === "insensitive" ||
-                queryMode === "insensitive";
+                fieldMode !== undefined
+                  ? fieldMode === "insensitive"
+                  : queryMode === "insensitive";
               params.push(isInsensitive ? String(opVal).toLowerCase() : opVal);
               opParts.push(
                 isInsensitive
@@ -259,30 +268,66 @@ function buildWhere(
             params.push(opVal);
             opParts.push(`${col} <= $${params.length}`);
             break;
-          case "contains":
+          case "contains": {
+            const isInsensitive =
+              (ops as any).mode === "insensitive" ||
+              queryMode === "insensitive";
             params.push(`%${opVal}%`);
-            opParts.push(`${col} ILIKE $${params.length}`);
+            opParts.push(
+              `${col} ${isInsensitive ? "ILIKE" : "LIKE"} $${params.length}`,
+            );
             break;
-          case "startswith":
+          }
+          case "startswith": {
+            const isInsensitive =
+              (ops as any).mode === "insensitive" ||
+              queryMode === "insensitive";
             params.push(`${opVal}%`);
-            opParts.push(`${col} ILIKE $${params.length}`);
+            opParts.push(
+              `${col} ${isInsensitive ? "ILIKE" : "LIKE"} $${params.length}`,
+            );
             break;
-          case "endswith":
+          }
+          case "endswith": {
+            const isInsensitive =
+              (ops as any).mode === "insensitive" ||
+              queryMode === "insensitive";
             params.push(`%${opVal}`);
-            opParts.push(`${col} ILIKE $${params.length}`);
+            opParts.push(
+              `${col} ${isInsensitive ? "ILIKE" : "LIKE"} $${params.length}`,
+            );
             break;
-          case "notcontains":
+          }
+          case "notcontains": {
+            const isInsensitive =
+              (ops as any).mode === "insensitive" ||
+              queryMode === "insensitive";
             params.push(`%${opVal}%`);
-            opParts.push(`${col} NOT ILIKE $${params.length}`);
+            opParts.push(
+              `${col} ${isInsensitive ? "NOT ILIKE" : "NOT LIKE"} $${params.length}`,
+            );
             break;
-          case "notstartswith":
+          }
+          case "notstartswith": {
+            const isInsensitive =
+              (ops as any).mode === "insensitive" ||
+              queryMode === "insensitive";
             params.push(`${opVal}%`);
-            opParts.push(`${col} NOT ILIKE $${params.length}`);
+            opParts.push(
+              `${col} ${isInsensitive ? "NOT ILIKE" : "NOT LIKE"} $${params.length}`,
+            );
             break;
-          case "notendswith":
+          }
+          case "notendswith": {
+            const isInsensitive =
+              (ops as any).mode === "insensitive" ||
+              queryMode === "insensitive";
             params.push(`%${opVal}`);
-            opParts.push(`${col} NOT ILIKE $${params.length}`);
+            opParts.push(
+              `${col} ${isInsensitive ? "NOT ILIKE" : "NOT LIKE"} $${params.length}`,
+            );
             break;
+          }
           case "hasany":
           case "hasevery": {
             params.push(opVal);
@@ -431,16 +476,24 @@ export async function runFind(
     mode,
   } = normalized as any;
 
-  /* ---- Validate mode ---- */
-  if (mode !== undefined && mode !== "sensitive" && mode !== "insensitive") {
+  /* ---- Validate clause ---- */
+  validateFindClause(normalized, table, columns);
+
+  /* ---- Validate page and after not used together ---- */
+  if (page && after && Object.keys(after).length > 0) {
     throw new MormError(
       {
-        code: "MORM_INVALID_VALUE",
-        message: `Invalid mode "${mode}" — must be "sensitive" or "insensitive"`,
+        code: "MORM_INVALID_CLAUSE",
+        message: `"page" and "after" cannot be used together — use either offset pagination or cursor pagination`,
       },
       "find",
       table,
     );
+  }
+
+  /* ---- Where clause ---- */
+  if (where) {
+    validateWhereClause(normalizeKeys(where), columns, table, "find");
   }
 
   const params: any[] = [];
@@ -500,82 +553,67 @@ export async function runFind(
     );
     if (whereSQL !== "TRUE") sql += ` WHERE ${whereSQL}`;
   }
-
   /* ---- After (cursor) ---- */
   if (after && Object.keys(after).length > 0) {
     const cursorCol = Object.keys(after)[0]!.toLowerCase();
     const cursorVal = Object.values(after)[0];
 
-    if (cursorVal !== null && cursorVal !== undefined) {
-      const effectiveOrderBy =
-        !orderBy || Object.keys(orderBy).length === 0
-          ? { [cursorCol]: "asc" }
-          : orderBy;
+    // Validate cursor column exists
+    const cursorColDef = validateColumnExists(
+      cursorCol,
+      columns,
+      table,
+      "find",
+    );
 
-      // Validate cursor column is unique or primary
-      const cursorColDef = columns.find((c: any) => c.name === cursorCol);
-      if (cursorColDef && !cursorColDef.__primary && !cursorColDef.unique) {
-        throw new MormError(
-          {
-            code: "MORM_INVALID_CURSOR",
-            message: `Cursor column "${cursorCol}" must be unique or primary key`,
-            column: cursorCol,
-          },
-          "find",
-          table,
-        );
-      }
-
-      const firstOrderCol = Object.keys(effectiveOrderBy)[0]!.toLowerCase();
-      const firstOrderDir = Object.values(effectiveOrderBy)[0];
-      const operator =
-        String(firstOrderDir).toUpperCase() === "DESC" ? "<" : ">";
-
-      let cursorResult: any;
-      try {
-        cursorResult = await client.query(
-          `SELECT ${q(firstOrderCol)} FROM ${q(table)} WHERE ${q(cursorCol)} = $1 LIMIT 1`,
-          [cursorVal],
-        );
-      } catch (err: any) {
-        throw new MormError(
-          {
-            code: "MORM_INVALID_CURSOR",
-            message: `Invalid cursor value "${cursorVal}" for column "${cursorCol}"`,
-            column: cursorCol,
-          },
-          "find",
-          table,
-        );
-      }
-
-      if (cursorResult.rows.length === 0) {
-        throw new MormError(
-          {
-            code: "MORM_INVALID_CURSOR",
-            message: `Cursor row not found for column "${cursorCol}" with value "${cursorVal}"`,
-            column: cursorCol,
-          },
-          "find",
-          table,
-        );
-      }
-
-      const cursorValue = cursorResult.rows[0][firstOrderCol];
-      const connector = sql.includes("WHERE") ? " AND" : " WHERE";
-      params.push(cursorValue);
-      sql += `${connector} ${q(table)}.${q(firstOrderCol)} ${operator} $${params.length}`;
+    // Validate cursor column is unique or primary
+    if (!cursorColDef.__primary && !cursorColDef.unique) {
+      throw new MormError(
+        {
+          code: "MORM_INVALID_CURSOR",
+          message: `Cursor column "${cursorCol}" must be unique or primary key`,
+          column: cursorCol,
+        },
+        "find",
+        table,
+      );
     }
+
+    // If cursor value is null, undefined, or empty — end of data, return empty
+    if (cursorVal === null || cursorVal === undefined || cursorVal === "") {
+      return [];
+    }
+
+    const operator =
+      orderBy && String((orderBy as any)[cursorCol]).toUpperCase() === "DESC"
+        ? "<"
+        : ">";
+    const connector = sql.includes("WHERE") ? " AND" : " WHERE";
+    params.push(cursorVal);
+    sql += `${connector} ${q(table)}.${q(cursorCol)} ${operator} $${params.length}`;
   }
 
   /* ---- Order by ---- */
   const orderParts: string[] = [];
+  const cursorCol =
+    after && Object.keys(after).length > 0
+      ? Object.keys(after)[0]!.toLowerCase()
+      : null;
 
-  // Distinct columns must come first in ORDER BY
+  // Cursor column always comes first in ORDER BY
+  if (cursorCol) {
+    const dir =
+      orderBy && String((orderBy as any)[cursorCol]).toUpperCase() === "DESC"
+        ? "DESC"
+        : "ASC";
+    orderParts.push(`${q(table)}.${q(cursorCol)} ${dir}`);
+  }
+
+  // Distinct columns must come first in ORDER BY (after cursor)
   if (distinct && Object.keys(distinct).length > 0) {
     for (const col of Object.keys(distinct)) {
       const colLower = col.toLowerCase();
-      // Use developer's direction if explicitly provided, else default ASC
+      if (colLower === cursorCol) continue; // already added
       const dir =
         orderBy && (orderBy as any)[colLower]
           ? String((orderBy as any)[colLower]).toUpperCase() === "DESC"
@@ -589,11 +627,11 @@ export async function runFind(
   if (orderBy && Object.keys(orderBy).length > 0) {
     for (const [col, dir] of Object.entries(orderBy)) {
       const colLower = col.toLowerCase();
-      if (!distinct || !(distinct as any)[colLower]) {
-        orderParts.push(
-          `${q(table)}.${q(colLower)} ${String(dir).toUpperCase() === "DESC" ? "DESC" : "ASC"}`,
-        );
-      }
+      if (colLower === cursorCol) continue; // already added
+      if (distinct && (distinct as any)[colLower]) continue;
+      orderParts.push(
+        `${q(table)}.${q(colLower)} ${String(dir).toUpperCase() === "DESC" ? "DESC" : "ASC"}`,
+      );
     }
   }
 
@@ -602,6 +640,16 @@ export async function runFind(
   }
   /* ---- Pagination ---- */
   const takeNum = take !== undefined ? parseInt(String(take)) : undefined;
+  if (takeNum !== undefined && takeNum < 0) {
+    throw new MormError(
+      {
+        code: "MORM_INVALID_CLAUSE",
+        message: `"take" must be a positive number`,
+      },
+      "find",
+      table,
+    );
+  }
   if (takeNum === 0) {
     return [];
   }
@@ -609,24 +657,23 @@ export async function runFind(
     sql += ` LIMIT ${takeNum}`;
   }
 
-  /* ---- Validate page and after not used together ---- */
-  if (page && after && Object.keys(after).length > 0) {
+  if (parseInt(String(page)) < 1) {
     throw new MormError(
       {
         code: "MORM_INVALID_CLAUSE",
-        message: `"page" and "after" cannot be used together — use either offset pagination or cursor pagination`,
+        message: `"page" must be a positive number starting from 1`,
       },
       "find",
       table,
     );
   }
 
-  if (page && !after) {
-    if (parseInt(String(page)) > 1 && !take) {
+  if (page !== undefined && !after) {
+    if (!take) {
       throw new MormError(
         {
           code: "MORM_INVALID_CLAUSE",
-          message: `"page" greater than 1 requires "take" to be set`,
+          message: `page" requires "take" to be set`,
         },
         "find",
         table,

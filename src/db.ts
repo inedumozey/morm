@@ -52,6 +52,16 @@ const morm = async (db_url: string) => {
           name: "tags",
           type: "text[]",
         },
+        {
+          name: "is_active",
+          type: "BOOLEAN",
+          default: true,
+        },
+        {
+          name: "role",
+          type: "USER_ROLE",
+          default: "STAFF",
+        },
       ],
     });
 

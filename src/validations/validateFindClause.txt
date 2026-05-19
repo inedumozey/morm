@@ -1,0 +1,31 @@
+find({}) key error not still communicating appropraitly
+1. when the key does not exist (meaning is not any of these; where, mode, orderBy, distinct, include, exclude, page, after, take, count, sum, avg, min, max or simpy nothing i.e {}), MORM should thow an inavlid keyword errors
+2. when the key is defined correct, next is the value, each of these keys has a syntax
+where:{} anything else should throw invalid value for where
+orderBy:{} anything else should throw invalid value for where
+distinct:{} anything else should throw invalid value for where
+include:{} anything else should throw invalid value for where
+exclude:{} anything else should throw invalid value for where
+after:{} anything else should throw invalid value for where
+
+
+sum:column_name anything else should throw invalid value for where, also id the value is provided but it is not a defined column should throw a nonexistance column error
+avg:column_name anything else should throw invalid value for where, also id the value is provided but it is not a defined column should throw a nonexistance column error
+max:column_name anything else should throw invalid value for where, also id the value is provided but it is not a defined column should throw a nonexistance column error
+min:column_name anything else should throw invalid value for where, also id the value is provided but it is not a defined column should throw a nonexistance column error
+page:number anything else should throw invalid value for where
+take:number anything else should throw invalid value for where
+count:boolean anything else should throw invalid value for where
+mode:string anything else should throw invalid value for where
+
+do them let us test, after the test, next fix is going to be those that has object as valeus, we would look into the keys and its values
+
+
+
+where validation
+where expects an object that is either empty where:{} or the object has valid key-value pairs
+keys: keywords (or/and) and column names
+values:
+column name => receieves the values that matches the type of the column or receieves an object where the keys are contains, endsWith, startsWith, notContains, notStartsWith, notEndsWith, eq, not, mode if the type of the column is text type or eq, not,lt, lte, gt, gte for number type
+keyword => "or" and "and" expects an [] either empty or contains objecks where the keys are valid column names and the values that matches the type of the column
+

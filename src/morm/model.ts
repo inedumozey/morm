@@ -283,27 +283,6 @@ export function createModelRuntime(
     } catch {}
   }
 
-  function sanitizeRow(
-    data: Record<string, any>,
-    querySanitize?: SanitizeConfig,
-  ) {
-    const out = { ...data };
-    for (const col of processed) {
-      const resolved = resolveSanitize(
-        undefined, // global level — handled at query layer
-        config.sanitize, // schemal level
-        col.sanitize, // column level
-        querySanitize, // query level
-      );
-      if (!resolved || !(col.name in out)) continue;
-
-      const type = String(col.type).toUpperCase();
-      if (type === "TEXT" || type.startsWith("VARCHAR") || type === "CHAR") {
-        out[col.name] = sanitizeText(out[col.name], resolved);
-      }
-    }
-    return out;
-  }
   const primaryKey: string | string[] = config.primaryKey?.length
     ? config.primaryKey
     : (processed.find((c) => c.__primary)?.name ?? "id");
@@ -315,7 +294,6 @@ export function createModelRuntime(
     indexes: config.indexes ?? [],
     sql: { create: createTableSQL, columns: columnsSQL },
     sanitize: config.sanitize ?? undefined,
-    sanitizeRow,
 
     async migrate(client: any, createdTables?: Set<string>) {
       if (createdTables?.has(config.table)) return true;

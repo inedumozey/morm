@@ -22,7 +22,7 @@ function q(n: string) {
 
 function isTextColumn(type: string): boolean {
   const t = type.toUpperCase();
-  return t === "TEXT" || t.startsWith("VARCHAR") || t === "CHAR";
+  return t === "TEXT" || t.startsWith("VARCHAR") || t.startsWith("CHAR");
 }
 
 /** Apply sanitize to a data row based on column types */
@@ -137,61 +137,59 @@ export async function runCreate(
   );
 
   for (const row of sanitizedRows) {
-    for (const row of sanitizedRows) {
-      for (const key of Object.keys(row)) {
-        if (!validColumns.has(key)) {
-          throw new MormError(
-            {
-              code: "MORM_INVALID_COLUMN",
-              message: `Column "${key}" does not exist on table "${table}"`,
-              column: key,
-            },
-            "create",
-            table,
-          );
-        }
-
-        // Validate NaN and Infinity
-        const val = row[key];
-        if (typeof val === "number" && !isFinite(val)) {
-          throw new MormError(
-            {
-              code: "MORM_INVALID_VALUE",
-              message: `Invalid value "${val}" for column "${key}" — NaN and Infinity are not allowed`,
-              column: key,
-            },
-            "create",
-            table,
-          );
-        }
+    for (const key of Object.keys(row)) {
+      if (!validColumns.has(key)) {
+        throw new MormError(
+          {
+            code: "MORM_INVALID_COLUMN",
+            message: `Column "${key}" does not exist on table "${table}"`,
+            column: key,
+          },
+          "create",
+          table,
+        );
       }
 
-      // Validate VARCHAR length
-      for (const col of columns) {
-        if (!col.type || !String(col.type).toUpperCase().startsWith("VARCHAR"))
-          continue;
-        if (
-          !(col.name in row) ||
-          row[col.name] === null ||
-          row[col.name] === undefined
-        )
-          continue;
+      // Validate NaN and Infinity
+      const val = row[key];
+      if (typeof val === "number" && !isFinite(val)) {
+        throw new MormError(
+          {
+            code: "MORM_INVALID_VALUE",
+            message: `Invalid value "${val}" for column "${key}" — NaN and Infinity are not allowed`,
+            column: key,
+          },
+          "create",
+          table,
+        );
+      }
+    }
 
-        const match = String(col.type).match(/\((\d+)\)/);
-        if (!match) continue;
+    // Validate VARCHAR length
+    for (const col of columns) {
+      if (!col.type || !String(col.type).toUpperCase().startsWith("VARCHAR"))
+        continue;
+      if (
+        !(col.name in row) ||
+        row[col.name] === null ||
+        row[col.name] === undefined
+      )
+        continue;
 
-        const maxLen = parseInt(match[1]!);
-        if (String(row[col.name]).length > maxLen) {
-          throw new MormError(
-            {
-              code: "22001",
-              message: `Value too long for column "${col.name}" — max length is ${maxLen}`,
-              column: col.name,
-            },
-            "create",
-            table,
-          );
-        }
+      const match = String(col.type).match(/\((\d+)\)/);
+      if (!match) continue;
+
+      const maxLen = parseInt(match[1]!);
+      if (String(row[col.name]).length > maxLen) {
+        throw new MormError(
+          {
+            code: "22001",
+            message: `Value too long for column "${col.name}" — max length is ${maxLen}`,
+            column: col.name,
+          },
+          "create",
+          table,
+        );
       }
     }
   }
