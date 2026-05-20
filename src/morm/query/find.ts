@@ -490,29 +490,102 @@ export async function runFind(
 
   const { columns, table } = model;
   const {
-    include,
-    exclude,
+    include: include_raw,
+    exclude: exclude_raw,
     where: whereRaw,
     orderby: orderByRaw,
     take: takeRaw,
     page: pageRaw,
     after: afterRaw,
-    distinct,
-    mode,
+    distinct: distinct_raw,
+    mode: mode_raw,
   } = normalized as any;
 
   /* ---- Resolve functions ---- */
-  const where = whereRaw ? await resolveObject(whereRaw) : whereRaw;
-  const orderBy = orderByRaw ? await resolveObject(orderByRaw) : orderByRaw;
+  const whereResolved =
+    typeof whereRaw === "function" ? await whereRaw() : whereRaw;
+  const where = whereResolved
+    ? await resolveObject(whereResolved)
+    : whereResolved;
+
+  const orderByResolved =
+    typeof orderByRaw === "function" ? await orderByRaw() : orderByRaw;
+  const orderBy = orderByResolved
+    ? await resolveObject(orderByResolved)
+    : orderByResolved;
+
   const take =
     typeof takeRaw === "function" ? await resolveValue(takeRaw) : takeRaw;
   const page =
     typeof pageRaw === "function" ? await resolveValue(pageRaw) : pageRaw;
-  const after = afterRaw ? await resolveObject(afterRaw) : afterRaw;
+
+  const afterResolved =
+    typeof afterRaw === "function" ? await afterRaw() : afterRaw;
+  const after = afterResolved
+    ? await resolveObject(afterResolved)
+    : afterResolved;
+
+  const includeResolved =
+    typeof include_raw === "function" ? await include_raw() : include_raw;
+  const include = includeResolved
+    ? await resolveObject(includeResolved)
+    : includeResolved;
+
+  const excludeResolved =
+    typeof exclude_raw === "function" ? await exclude_raw() : exclude_raw;
+  const exclude = excludeResolved
+    ? await resolveObject(excludeResolved)
+    : excludeResolved;
+
+  const distinctResolved =
+    typeof distinct_raw === "function" ? await distinct_raw() : distinct_raw;
+  const distinct = distinctResolved
+    ? await resolveObject(distinctResolved)
+    : distinctResolved;
+
+  const mode =
+    typeof mode_raw === "function" ? await resolveValue(mode_raw) : mode_raw;
 
   /* ---- Validate clause ---- */
-  validateFindClause(normalized, table, columns);
+  const sum =
+    typeof (normalized as any).sum === "function"
+      ? await resolveValue((normalized as any).sum)
+      : (normalized as any).sum;
+  const avg =
+    typeof (normalized as any).avg === "function"
+      ? await resolveValue((normalized as any).avg)
+      : (normalized as any).avg;
+  const min =
+    typeof (normalized as any).min === "function"
+      ? await resolveValue((normalized as any).min)
+      : (normalized as any).min;
+  const max =
+    typeof (normalized as any).max === "function"
+      ? await resolveValue((normalized as any).max)
+      : (normalized as any).max;
+  const count =
+    typeof (normalized as any).count === "function"
+      ? await resolveValue((normalized as any).count)
+      : (normalized as any).count;
 
+  const resolvedNormalized = {
+    ...normalized,
+    where,
+    orderby: orderBy,
+    take,
+    page,
+    after,
+    include,
+    exclude,
+    distinct,
+    mode,
+    sum,
+    avg,
+    min,
+    max,
+    count,
+  };
+  validateFindClause(resolvedNormalized, table, columns);
   /* ---- Validate page and after not used together ---- */
   if (page && after && Object.keys(after).length > 0) {
     throw new MormError(
@@ -533,10 +606,10 @@ export async function runFind(
   const params: any[] = [];
 
   /* ---- Aggregation ---- */
-  const isAgg = hasAggregation(normalized);
+  const isAgg = hasAggregation(resolvedNormalized as FindClause);
 
   if (isAgg) {
-    const aggSQL = buildAggregationSQL(normalized, table);
+    const aggSQL = buildAggregationSQL(resolvedNormalized as FindClause, table);
     let sql = `SELECT ${aggSQL} FROM ${q(table)}`;
     if (where) {
       const whereSQL = buildWhere(
@@ -556,7 +629,10 @@ export async function runFind(
         console.log(
           `\x1b[36m  ⚡ find "${table}" — aggregation — ${Date.now() - start}ms\x1b[0m`,
         );
-      return parseAggregationResult(result.rows[0], normalized);
+      return parseAggregationResult(
+        result.rows[0],
+        resolvedNormalized as FindClause,
+      );
     } catch (err: any) {
       throwQueryError(err, "find", table);
     }
@@ -587,7 +663,23 @@ export async function runFind(
     );
     if (whereSQL !== "TRUE") sql += ` WHERE ${whereSQL}`;
   }
+
   /* ---- After (cursor) ---- */
+  if (
+    after !== undefined &&
+    after !== null &&
+    Object.keys(after).length === 0
+  ) {
+    throw new MormError(
+      {
+        code: "MORM_INVALID_CLAUSE",
+        message: `"after" requires a unique or primary key column e.g. after: { id: "value" }`,
+      },
+      "find",
+      table,
+    );
+  }
+
   if (after && Object.keys(after).length > 0) {
     const cursorCol = Object.keys(after)[0]!.toLowerCase();
     const cursorVal = Object.values(after)[0];
@@ -727,6 +819,7 @@ export async function runFind(
       );
     return result.rows as Record<string, any>[];
   } catch (err: any) {
+    if (err.code === "22P02" && after) return [];
     throwQueryError(err, "find", table);
   }
 }

@@ -24,62 +24,62 @@ type ComparableKeys<T> = {
   string;
 
 export interface ScalarOperators {
-  eq?: MaybeFunction<string | number | boolean | Date | null>;
-  not?: MaybeFunction<string | number | boolean | Date | null>;
-  gt?: MaybeFunction<string | number | Date>;
-  gte?: MaybeFunction<string | number | Date>;
-  lt?: MaybeFunction<string | number | Date>;
-  lte?: MaybeFunction<string | number | Date>;
-  contains?: MaybeFunction<string>;
-  startsWith?: MaybeFunction<string>;
-  endsWith?: MaybeFunction<string>;
-  notContains?: MaybeFunction<string>;
-  notStartsWith?: MaybeFunction<string>;
-  notEndsWith?: MaybeFunction<string>;
-  mode?: MaybeFunction<Mode>;
+  eq?: string | number | boolean | Date;
+  not?: string | number | boolean | Date | null;
+  gt?: string | number | Date;
+  gte?: string | number | Date;
+  lt?: string | number | Date;
+  lte?: string | number | Date;
+  contains?: string;
+  startsWith?: string;
+  endsWith?: string;
+  notContains?: string;
+  notStartsWith?: string;
+  notEndsWith?: string;
+  mode?: Mode;
 }
 
 export interface ArrayOperators {
-  hasAny?: MaybeFunction<MaybeFunction<string | number | boolean>[]>;
-  hasEvery?: MaybeFunction<MaybeFunction<string | number | boolean>[]>;
+  hasAny?: (string | number | boolean)[];
+  hasEvery?: (string | number | boolean)[];
 }
 
 export type SortDirection = "asc" | "desc" | "ASC" | "DESC";
 export type Mode = "sensitive" | "insensitive";
 
 export type TextOperators = {
-  eq?: MaybeFunction<string | null>;
-  not?: MaybeFunction<string | null>;
-  contains?: MaybeFunction<string>;
-  startsWith?: MaybeFunction<string>;
-  endsWith?: MaybeFunction<string>;
-  notContains?: MaybeFunction<string>;
-  notStartsWith?: MaybeFunction<string>;
-  notEndsWith?: MaybeFunction<string>;
-  mode?: MaybeFunction<Mode>;
+  eq?: string | null;
+  not?: string | null;
+  contains?: string;
+  startsWith?: string;
+  endsWith?: string;
+  notContains?: string;
+  notStartsWith?: string;
+  notEndsWith?: string;
+  mode?: Mode;
 };
 
 export type NumberOperators = {
-  eq?: MaybeFunction<number | null>;
-  not?: MaybeFunction<number | null>;
-  gt?: MaybeFunction<number>;
-  gte?: MaybeFunction<number>;
-  lt?: MaybeFunction<number>;
-  lte?: MaybeFunction<number>;
+  eq?: number | null;
+  not?: number | null;
+  gt?: number;
+  gte?: number;
+  lt?: number;
+  lte?: number;
 };
 
 export type BooleanOperators = {
-  eq?: MaybeFunction<boolean | null>;
-  not?: MaybeFunction<boolean | null>;
+  eq?: boolean | null;
+  not?: boolean | null;
 };
 
 export type DateOperators = {
-  eq?: MaybeFunction<Date | string | null>;
-  not?: MaybeFunction<Date | string | null>;
-  gt?: MaybeFunction<Date | string>;
-  gte?: MaybeFunction<Date | string>;
-  lt?: MaybeFunction<Date | string>;
-  lte?: MaybeFunction<Date | string>;
+  eq?: Date | string | null;
+  not?: Date | string | null;
+  gt?: Date | string;
+  gte?: Date | string;
+  lt?: Date | string;
+  lte?: Date | string;
 };
 
 export type ColumnCondition =
@@ -92,29 +92,28 @@ export type ColumnCondition =
   | ArrayOperators;
 
 export type WhereClause<T = Record<string, any>> = {
-  and?: MaybeFunction<WhereClause<T>>[];
-  or?: MaybeFunction<WhereClause<T>>[];
+  and?: WhereClause<T>[];
+  or?: WhereClause<T>[];
 } & {
   [K in keyof T]?: NonNullable<T[K]> extends any[]
-    ? MaybeFunction<ArrayOperators | null>
+    ? ArrayOperators | null
     : NonNullable<T[K]> extends boolean
-      ? MaybeFunction<BooleanOperators | boolean | null>
+      ? BooleanOperators | boolean | null
       : NonNullable<T[K]> extends Date
-        ? MaybeFunction<DateOperators | Date | string | null>
+        ? DateOperators | Date | string | null
         : NonNullable<T[K]> extends number
-          ? MaybeFunction<NumberOperators | number | string | null>
+          ? NumberOperators | number | null
           : NonNullable<T[K]> extends string
             ? string extends NonNullable<T[K]>
-              ? MaybeFunction<TextOperators | string | null>
-              : MaybeFunction<
+              ? TextOperators | string | null
+              :
                   | NonNullable<T[K]>
                   | {
-                      eq?: MaybeFunction<NonNullable<T[K]> | null>;
-                      not?: MaybeFunction<NonNullable<T[K]> | null>;
+                      eq?: NonNullable<T[K]> | null;
+                      not?: NonNullable<T[K]> | null;
                     }
                   | null
-                >
-            : MaybeFunction<ColumnCondition | null>;
+            : ColumnCondition | null;
 };
 
 /* ===================================================== */
@@ -161,22 +160,20 @@ export type DistinctClause<T = Record<string, any>> = {
 /* ===================================================== */
 
 export interface FindClause<T = Record<string, any>> {
-  where?: MaybeFunction<WhereClause<T>>;
-  include?: MaybeFunction<IncludeClause<T>>;
-  exclude?: MaybeFunction<ExcludeClause<T>>;
-  orderBy?: MaybeFunction<OrderByClause<T>>;
-  take?: MaybeFunction<number>;
-  page?: MaybeFunction<number>;
-  after?: MaybeFunction<{
-    [K in keyof T]?: MaybeFunction<string | number | null>;
-  }>;
-  distinct?: MaybeFunction<DistinctClause<T>>;
-  count?: MaybeFunction<boolean>;
-  sum?: MaybeFunction<NumberKeys<T>>;
-  avg?: MaybeFunction<NumberKeys<T>>;
-  min?: MaybeFunction<ComparableKeys<T>>;
-  max?: MaybeFunction<ComparableKeys<T>>;
-  mode?: MaybeFunction<Mode>;
+  where?: WhereClause<T>;
+  include?: IncludeClause<T>;
+  exclude?: ExcludeClause<T>;
+  orderBy?: OrderByClause<T>;
+  take?: number;
+  page?: number;
+  after?: { [K in keyof T]?: string | number | null };
+  distinct?: DistinctClause<T>;
+  count?: boolean;
+  sum?: NumberKeys<T>;
+  avg?: NumberKeys<T>;
+  min?: ComparableKeys<T>;
+  max?: ComparableKeys<T>;
+  mode?: Mode;
 }
 
 /* ===================================================== */
@@ -200,18 +197,6 @@ export interface AggregationResult {
   min?: Record<string, number | string>;
   max?: Record<string, number | string>;
 }
-
-export type FindResult<T, C> = C extends { count: true }
-  ? AggregationResult
-  : C extends { sum: any }
-    ? AggregationResult
-    : C extends { avg: any }
-      ? AggregationResult
-      : C extends { min: any }
-        ? AggregationResult
-        : C extends { max: any }
-          ? AggregationResult
-          : T[];
 
 /* ===================================================== */
 /* CREATE                                                */

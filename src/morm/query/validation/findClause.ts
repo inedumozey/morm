@@ -52,6 +52,22 @@ export function validateFindClause(
     }
   }
 
+  if (normalized.after !== undefined && normalized.after !== null) {
+    if (
+      typeof normalized.after !== "object" ||
+      Array.isArray(normalized.after)
+    ) {
+      throw new MormError(
+        {
+          code: "MORM_INVALID_CLAUSE",
+          message: `"after" received an invalid value — expected an object e.g. after: { ... }`,
+        },
+        "find",
+        table,
+      );
+    }
+  }
+
   /* ---- Validate object-type clauses ---- */
   for (const key of [
     "where",
@@ -62,7 +78,10 @@ export function validateFindClause(
     "after",
   ]) {
     const val = normalized[key];
-    if (val !== undefined && (typeof val !== "object" || Array.isArray(val))) {
+    if (
+      val !== undefined &&
+      (val === null || typeof val !== "object" || Array.isArray(val))
+    ) {
       throw new MormError(
         {
           code: "MORM_INVALID_CLAUSE",
@@ -106,7 +125,7 @@ export function validateFindClause(
 
   /* ---- Validate sum/avg/min/max ---- */
   for (const key of ["sum", "avg", "min", "max"]) {
-    if (!(key in normalized)) continue;
+    if (normalized[key] === undefined || normalized[key] === null) continue;
     const val = normalized[key];
     if (
       val === null ||

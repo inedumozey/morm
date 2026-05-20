@@ -290,7 +290,17 @@ export async function resolveObject<T extends Record<string, any>>(
   for (const [key, val] of Object.entries(obj)) {
     const resolved = typeof val === "function" ? await val() : val;
     if (Array.isArray(resolved)) {
-      result[key] = Array.from(resolved);
+      result[key] = await Promise.all(
+        resolved.map((item) =>
+          typeof item === "function"
+            ? item()
+            : typeof item === "object" &&
+                item !== null &&
+                !(item instanceof Date)
+              ? resolveObject(item)
+              : item,
+        ),
+      );
     } else if (
       resolved !== null &&
       typeof resolved === "object" &&

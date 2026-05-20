@@ -219,7 +219,12 @@ export function generateTypes(
       `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}>): Promise<{ count: number }>;`,
     );
     lines.push(
-      `      find<C extends import("./morm/query/index.js").FindClause<${typeName}>>(clause?: C): Promise<import("./morm/query/index.js").FindResult<${typeName}, C>>;`,
+      `      find(clause: import("./morm/query/index.js").FindClause<${typeName}> & { count: true }): Promise<import("./morm/query/index.js").AggregationResult>;`,
+      `      find(clause: import("./morm/query/index.js").FindClause<${typeName}> & { sum: string }): Promise<import("./morm/query/index.js").AggregationResult>;`,
+      `      find(clause: import("./morm/query/index.js").FindClause<${typeName}> & { avg: string }): Promise<import("./morm/query/index.js").AggregationResult>;`,
+      `      find(clause: import("./morm/query/index.js").FindClause<${typeName}> & { min: string }): Promise<import("./morm/query/index.js").AggregationResult>;`,
+      `      find(clause: import("./morm/query/index.js").FindClause<${typeName}> & { max: string }): Promise<import("./morm/query/index.js").AggregationResult>;`,
+      `      find(clause?: import("./morm/query/index.js").FindClause<${typeName}>): Promise<${typeName}[]>;`,
     );
     lines.push(
       `      findOne: (clause?: import("./morm/query/index.js").FindOneClause<${typeName}>) => Promise<${typeName} | null>;`,
@@ -255,7 +260,12 @@ export function generateTypes(
       `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}>): Promise<{ count: number }>;`,
     );
     lines.push(
-      `      find<C extends import("./morm/query/index.js").FindClause<${typeName}>>(clause?: C): Promise<import("./morm/query/index.js").FindResult<${typeName}, C>>;`,
+      `      find(clause: import("./morm/query/index.js").FindClause<${typeName}> & { count: true }): Promise<import("./morm/query/index.js").AggregationResult>;`,
+      `      find(clause: import("./morm/query/index.js").FindClause<${typeName}> & { sum: string }): Promise<import("./morm/query/index.js").AggregationResult>;`,
+      `      find(clause: import("./morm/query/index.js").FindClause<${typeName}> & { avg: string }): Promise<import("./morm/query/index.js").AggregationResult>;`,
+      `      find(clause: import("./morm/query/index.js").FindClause<${typeName}> & { min: string }): Promise<import("./morm/query/index.js").AggregationResult>;`,
+      `      find(clause: import("./morm/query/index.js").FindClause<${typeName}> & { max: string }): Promise<import("./morm/query/index.js").AggregationResult>;`,
+      `      find(clause?: import("./morm/query/index.js").FindClause<${typeName}>): Promise<${typeName}[]>;`,
     );
     lines.push(
       `      findOne: (clause?: import("./morm/query/index.js").FindOneClause<${typeName}>) => Promise<${typeName} | null>;`,

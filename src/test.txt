@@ -1,0 +1,43 @@
+
+ const users1 = await trx.user.find({
+        where: { account_number: () => 6 },
+        take: () => 5,
+        count: () => true,
+        page: () => 5,
+        sum: () => "account_number",
+        after: { id: () => "00dbe0d1-fbfd-4fec-9898-abebf839fff0" },
+        include: {
+          role: () => true,
+          is_active: () => true,
+          account_number: () => true,
+        },
+      });
+
+      const users2 = await trx.user.find({
+        where: {
+          or: [{ username: () => "user2" }, { email: () => "user1@gmail.com" }],
+        },
+        take: () => 5,
+        count: () => true,
+        page: () => 5,
+        sum: () => "account_number",
+        after: { id: () => "00dbe0d1-fbfd-4fec-9898-abebf839fff0" },
+        include: {
+          role: () => true,
+          is_active: () => true,
+          account_number: () => true,
+        },
+      });
+
+      const users3 = await trx.user.find({
+        where: { or: [{ username: "user2" }, { email: "user1@gmail.com" }] },
+        take: 5,
+        count: true,
+        page: 5,
+        sum: "account_number",
+        after: { id: "00dbe0d1-fbfd-4fec-9898-abebf839fff0" },
+        include: { role: true, is_active: true, account_number: true },
+      });
+
+those ones with
+
