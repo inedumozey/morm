@@ -234,3 +234,72 @@ export function validateMode(
     );
   }
 }
+
+export function validateNumericString(
+  val: any,
+  colName: string,
+  table: string,
+  operation: QueryOperation,
+  colType?: string,
+): void {
+  if (typeof val !== "string") return;
+
+  const isInteger = colType
+    ? ["INT", "INTEGER", "BIGINT", "SMALLINT"].some((t) =>
+        colType.toUpperCase().startsWith(t),
+      )
+    : false;
+
+  const integerRegex = /^-?\d+$/;
+  const decimalRegex = /^-?\d+(\.\d+)?$/;
+  const regex = isInteger ? integerRegex : decimalRegex;
+
+  if (!regex.test(val.trim())) {
+    throw new MormError(
+      {
+        code: "MORM_INVALID_VALUE",
+        message: isInteger
+          ? `Invalid value "${val}" for column "${colName}" — expected a whole number or numeric string`
+          : `Invalid value "${val}" for column "${colName}" — expected a number or numeric string`,
+        column: colName,
+      },
+      operation,
+      table,
+    );
+  }
+}
+
+export function buildDateComparison(
+  col: string,
+  operator: string,
+  paramIndex: number,
+): string {
+  return `DATE_TRUNC('milliseconds', ${col}) ${operator} $${paramIndex}::timestamptz`;
+}
+
+export type MaybeFunction<T> = T | (() => T) | (() => Promise<T>);
+
+export async function resolveValue<T>(val: MaybeFunction<T>): Promise<T> {
+  return typeof val === "function" ? await (val as () => Promise<T>)() : val;
+}
+
+export async function resolveObject<T extends Record<string, any>>(
+  obj: T,
+): Promise<T> {
+  const result: any = {};
+  for (const [key, val] of Object.entries(obj)) {
+    const resolved = typeof val === "function" ? await val() : val;
+    if (Array.isArray(resolved)) {
+      result[key] = Array.from(resolved);
+    } else if (
+      resolved !== null &&
+      typeof resolved === "object" &&
+      !(resolved instanceof Date)
+    ) {
+      result[key] = await resolveObject(resolved);
+    } else {
+      result[key] = resolved;
+    }
+  }
+  return result as T;
+}

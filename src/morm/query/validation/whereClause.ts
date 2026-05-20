@@ -10,6 +10,7 @@ import {
   isDateCol,
   getAllowedOperators,
   validateColumnExists,
+  validateNumericString,
 } from "./queryUtility.js";
 
 /* ===================================================== */
@@ -75,17 +76,24 @@ function validateOperatorValue(
   if (isNumberCol(colType) && val !== null) {
     if (
       (opLower === "eq" || opLower === "not" || NUMERIC_OPS.has(opLower)) &&
-      typeof val !== "number"
+      typeof val !== "number" &&
+      typeof val !== "string"
     ) {
       throw new MormError(
         {
           code: "MORM_INVALID_VALUE",
-          message: `Operator "${opLower}" expects a number value, got "${typeof val}" for column "${colName}"`,
+          message: `Operator "${opLower}" expects a number or numeric string for column "${colName}"`,
           column: colName,
         },
         operation,
         table,
       );
+    }
+    if (
+      (opLower === "eq" || opLower === "not" || NUMERIC_OPS.has(opLower)) &&
+      typeof val === "string"
+    ) {
+      validateNumericString(val, colName, table, operation, colType);
     }
   }
 
@@ -201,6 +209,10 @@ function validateColumnValue(
   // number column
   if (isNumberCol(colType)) {
     if (typeof value === "number") return;
+    if (typeof value === "string") {
+      validateNumericString(value, colName, table, operation, colType);
+      return;
+    }
     if (typeof value === "object" && !Array.isArray(value)) {
       for (const [op, opVal] of Object.entries(value as Record<string, any>)) {
         const opLower = op.toLowerCase();

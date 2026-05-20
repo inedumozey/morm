@@ -46,19 +46,20 @@ export const testCrteate = async (morm: Morm) => {
           account_number: 5,
           state: "Lagos",
           tags: ["javascript"],
-          is_active: true,
+          is_active: 4,
           role: "STAFF",
         },
       ];
+
       const result = await trx.user.create({
         data: {
-          username: "user98",
-          email: "user98@gmail.com",
-          account_number: 98,
-          state: "Plateau",
-          tags: ["javascript"],
+          // username: () => "user99",
+          // email: () => "user98@gmail.com",
+          // account_number: () => "5",
+          // state: () => "Plateau",
+          // tags: () => ["javascript"],
           is_active: true,
-          role: "SUPERADMIN",
+          role: "MARKED",
         },
         skipDuplicates: true,
       });

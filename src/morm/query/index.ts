@@ -1,34 +1,35 @@
 // query/types.ts
 
 import type { SanitizeConfig } from "../utils/sanitize.js";
+export type MaybeFunction<T> = T | (() => T) | (() => Promise<T>);
 
 /* ===================================================== */
 /* WHERE CONDITIONS                                       */
 /* ===================================================== */
 
 type NumberKeys<T> = {
-  [K in keyof T]: NonNullable<T[K]> extends number ? K : never;
+  [K in keyof T]: number extends NonNullable<T[K]> ? K : never;
 }[keyof T] &
   string;
 
 type ComparableKeys<T> = {
-  [K in keyof T]: NonNullable<T[K]> extends boolean
+  [K in keyof T]: NonNullable<T[K]> extends boolean | any[]
     ? never
-    : NonNullable<T[K]> extends any[]
-      ? never
-      : NonNullable<T[K]> extends number | Date
+    : number extends NonNullable<T[K]>
+      ? K
+      : NonNullable<T[K]> extends Date
         ? K
         : never;
 }[keyof T] &
   string;
 
 export interface ScalarOperators {
-  eq?: string | number | boolean;
-  not?: string | number | boolean | null;
-  gt?: string | number;
-  gte?: string | number;
-  lt?: string | number;
-  lte?: string | number;
+  eq?: string | number | boolean | Date;
+  not?: string | number | boolean | Date | null;
+  gt?: string | number | Date;
+  gte?: string | number | Date;
+  lt?: string | number | Date;
+  lte?: string | number | Date;
   contains?: string;
   startsWith?: string;
   endsWith?: string;
@@ -43,38 +44,49 @@ export interface ArrayOperators {
   hasEvery?: (string | number | boolean)[];
 }
 
-/* ===================================================== */
-/* SORTING / DISTINCT                                    */
-/* ===================================================== */
-
 export type SortDirection = "asc" | "desc" | "ASC" | "DESC";
-
 export type Mode = "sensitive" | "insensitive";
 
-export type TextOperators = Pick<
-  ScalarOperators,
-  | "eq"
-  | "not"
-  | "contains"
-  | "startsWith"
-  | "endsWith"
-  | "notContains"
-  | "notStartsWith"
-  | "notEndsWith"
-  | "mode"
->;
+export type TextOperators = {
+  eq?: string | null;
+  not?: string | null;
+  contains?: string;
+  startsWith?: string;
+  endsWith?: string;
+  notContains?: string;
+  notStartsWith?: string;
+  notEndsWith?: string;
+  mode?: Mode;
+};
 
-export type NumberOperators = Pick<
-  ScalarOperators,
-  "eq" | "not" | "gt" | "gte" | "lt" | "lte" | "mode"
->;
+export type NumberOperators = {
+  eq?: number | null;
+  not?: number | null;
+  gt?: number;
+  gte?: number;
+  lt?: number;
+  lte?: number;
+};
 
-export type BooleanOperators = Pick<ScalarOperators, "eq" | "not">;
+export type BooleanOperators = {
+  eq?: boolean | null;
+  not?: boolean | null;
+};
+
+export type DateOperators = {
+  eq?: Date | string | null;
+  not?: Date | string | null;
+  gt?: Date | string;
+  gte?: Date | string;
+  lt?: Date | string;
+  lte?: Date | string;
+};
 
 export type ColumnCondition =
   | string
   | number
   | boolean
+  | Date
   | null
   | ScalarOperators
   | ArrayOperators;
@@ -87,11 +99,21 @@ export type WhereClause<T = Record<string, any>> = {
     ? ArrayOperators | null
     : NonNullable<T[K]> extends boolean
       ? BooleanOperators | boolean | null
-      : NonNullable<T[K]> extends number
-        ? NumberOperators | number | null
-        : NonNullable<T[K]> extends string
-          ? TextOperators | string | null
-          : ColumnCondition | null;
+      : NonNullable<T[K]> extends Date
+        ? DateOperators | Date | string | null
+        : NonNullable<T[K]> extends number
+          ? NumberOperators | number | null
+          : NonNullable<T[K]> extends string
+            ? string extends NonNullable<T[K]>
+              ? TextOperators | string | null
+              :
+                  | NonNullable<T[K]>
+                  | {
+                      eq?: NonNullable<T[K]> | null;
+                      not?: NonNullable<T[K]> | null;
+                    }
+                  | null
+            : ColumnCondition | null;
 };
 
 /* ===================================================== */
@@ -103,8 +125,8 @@ export interface RelationInclude<T = Record<string, any>> {
   include?: IncludeClause<T>;
   exclude?: ExcludeClause<T>;
   orderBy?: OrderByClause<T>;
-  take?: number;
-  page?: number;
+  take?: MaybeFunction<number>;
+  page?: MaybeFunction<number>;
   after?: { [K in keyof T]?: string | number | null };
   distinct?: DistinctClause<T>;
   count?: boolean;

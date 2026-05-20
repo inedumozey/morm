@@ -29,3 +29,11 @@ values:
 column name => receieves the values that matches the type of the column or receieves an object where the keys are contains, endsWith, startsWith, notContains, notStartsWith, notEndsWith, eq, not, mode if the type of the column is text type or eq, not,lt, lte, gt, gte for number type
 keyword => "or" and "and" expects an [] either empty or contains objecks where the keys are valid column names and the values that matches the type of the column
 
+
+inside where with column as the key, e.g
+where:{username:""} username is a text column and hence only accept string, it is working fine
+where: { account_number:  ""}, it shows red line which is fine but however there are some number column that the type is decimal and numberic, those type (decimal and numeric, do ther accept string number "3"), i think all number type should also allow number string e.g "3"
+where: { role: "" }, which has enum type; should only accept the enum values, 
+
+autocomplete
+autocomplete should show with the type that has boolean (true/false) and enum (list the enum values)

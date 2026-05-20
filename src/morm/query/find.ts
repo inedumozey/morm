@@ -16,7 +16,12 @@ import {
 } from "./index.js";
 
 import { validateWhereClause } from "./validation/whereClause.js";
-import { validateColumnExists } from "./validation/queryUtility.js";
+import {
+  buildDateComparison,
+  resolveObject,
+  resolveValue,
+  validateColumnExists,
+} from "./validation/queryUtility.js";
 
 /* ===================================================== */
 /* HELPERS                                               */
@@ -225,12 +230,19 @@ function buildWhere(
                 fieldMode !== undefined
                   ? fieldMode === "insensitive"
                   : queryMode === "insensitive";
-              params.push(isInsensitive ? String(opVal).toLowerCase() : opVal);
-              opParts.push(
-                isInsensitive
-                  ? `LOWER(${col}) = $${params.length}`
-                  : `${col} = $${params.length}`,
-              );
+              if (isDateCol) {
+                params.push(opVal);
+                opParts.push(buildDateComparison(col, "=", params.length));
+              } else {
+                params.push(
+                  isInsensitive ? String(opVal).toLowerCase() : opVal,
+                );
+                opParts.push(
+                  isInsensitive
+                    ? `LOWER(${col}) = $${params.length}`
+                    : `${col} = $${params.length}`,
+                );
+              }
             }
             break;
           case "not":
@@ -242,12 +254,19 @@ function buildWhere(
                 fieldMode !== undefined
                   ? fieldMode === "insensitive"
                   : queryMode === "insensitive";
-              params.push(isInsensitive ? String(opVal).toLowerCase() : opVal);
-              opParts.push(
-                isInsensitive
-                  ? `LOWER(${col}) != $${params.length}`
-                  : `${col} != $${params.length}`,
-              );
+              if (isDateCol) {
+                params.push(opVal);
+                opParts.push(buildDateComparison(col, "!=", params.length));
+              } else {
+                params.push(
+                  isInsensitive ? String(opVal).toLowerCase() : opVal,
+                );
+                opParts.push(
+                  isInsensitive
+                    ? `LOWER(${col}) != $${params.length}`
+                    : `${col} != $${params.length}`,
+                );
+              }
             }
             break;
           case "mode":
@@ -363,8 +382,14 @@ function buildWhere(
     const basicIsTextCol = ["TEXT", "VARCHAR", "CHAR"].some((t) =>
       basicColType.startsWith(t),
     );
+    const basicIsDateCol = ["TIMESTAMP", "DATE", "TIME"].some((t) =>
+      basicColType.startsWith(t),
+    );
 
-    if (queryMode === "insensitive" && basicIsTextCol) {
+    if (basicIsDateCol) {
+      params.push(value);
+      parts.push(buildDateComparison(col, "=", params.length));
+    } else if (queryMode === "insensitive" && basicIsTextCol) {
       params.push(String(value).toLowerCase());
       parts.push(`LOWER(${col}) = $${params.length}`);
     } else {
@@ -467,14 +492,23 @@ export async function runFind(
   const {
     include,
     exclude,
-    where,
-    orderby: orderBy,
-    take,
-    page,
-    after,
+    where: whereRaw,
+    orderby: orderByRaw,
+    take: takeRaw,
+    page: pageRaw,
+    after: afterRaw,
     distinct,
     mode,
   } = normalized as any;
+
+  /* ---- Resolve functions ---- */
+  const where = whereRaw ? await resolveObject(whereRaw) : whereRaw;
+  const orderBy = orderByRaw ? await resolveObject(orderByRaw) : orderByRaw;
+  const take =
+    typeof takeRaw === "function" ? await resolveValue(takeRaw) : takeRaw;
+  const page =
+    typeof pageRaw === "function" ? await resolveValue(pageRaw) : pageRaw;
+  const after = afterRaw ? await resolveObject(afterRaw) : afterRaw;
 
   /* ---- Validate clause ---- */
   validateFindClause(normalized, table, columns);

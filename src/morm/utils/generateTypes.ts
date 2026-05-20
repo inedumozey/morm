@@ -44,7 +44,7 @@ function sqlToTs(rawType: string, enumRegistry: Map<string, string[]>): string {
   if (enumRegistry.has(base)) {
     const values = enumRegistry.get(base)!;
     const union = values.map((v) => `"${v}"`).join(" | ");
-    return isArray ? `(${union} | string)[]` : `${union} | string`;
+    return isArray ? `(${union})[]` : union;
   }
 
   let tsType: string;
@@ -69,7 +69,7 @@ function sqlToTs(rawType: string, enumRegistry: Map<string, string[]>): string {
     case "DECIMAL":
     case "REAL":
     case "FLOAT8":
-      tsType = "number";
+      tsType = "number | string";
       break;
 
     case "BOOLEAN":
@@ -123,7 +123,12 @@ function toPascalCase(str: string): string {
 function generateModelType(
   model: any,
   enumRegistry: Map<string, string[]>,
-): { typeName: string; typeBlock: string } {
+): {
+  typeName: string;
+  typeBlock: string;
+  inputTypeName: string;
+  inputTypeBlock: string;
+} {
   const typeName = `${toPascalCase(model.table)}Type`;
   const lines: string[] = [];
 
@@ -139,8 +144,26 @@ function generateModelType(
     );
   }
 
+  // Build input type — same but enums also accept string
+  const enumLines = lines.map((line) => {
+    return line.replace(
+      /: (("[^"]*"(\s*\|\s*"[^"]*")*))(\s*\| null)?;/,
+      (_, union, __, ___, nullPart) => {
+        return `: ${union} | (string & {})${nullPart ?? ""};`;
+      },
+    );
+  });
+
+  const inputLines = enumLines.map((line) => {
+    return line.replace(/: number(\s*\| null)?;/, (_, nullPart) => {
+      return `: number | string${nullPart ?? ""};`;
+    });
+  });
+
+  const inputTypeName = `${toPascalCase(model.table)}InputType`;
   const typeBlock = `  type ${typeName} = {\n${lines.join("\n")}\n  }`;
-  return { typeName, typeBlock };
+  const inputTypeBlock = `  type ${inputTypeName} = {\n${inputLines.join("\n")}\n  }`;
+  return { typeName, typeBlock, inputTypeName, inputTypeBlock };
 }
 
 /* ===================================================== */
@@ -168,25 +191,32 @@ export function generateTypes(
   lines.push(``);
 
   // Generate a type per model
-  const modelTypes: { table: string; typeName: string }[] = [];
+  const modelTypes: {
+    table: string;
+    typeName: string;
+    inputTypeName: string;
+  }[] = [];
 
   for (const model of models) {
-    const { typeName, typeBlock } = generateModelType(model, enumRegistry);
+    const { typeName, typeBlock, inputTypeName, inputTypeBlock } =
+      generateModelType(model, enumRegistry);
     lines.push(typeBlock);
     lines.push(``);
-    modelTypes.push({ table: model.table, typeName });
+    lines.push(inputTypeBlock);
+    lines.push(``);
+    modelTypes.push({ table: model.table, typeName, inputTypeName });
   }
 
   // MormDB type — used inside transaction
   lines.push(`  type MormDB = {`);
-  for (const { table, typeName } of modelTypes) {
+  for (const { table, typeName, inputTypeName } of modelTypes) {
     lines.push(`    ${table}: {`);
     lines.push(
-      `      create(clause: import("./morm/query/index.js").CreateClause<${typeName}> & { data: Partial<${typeName}>[]; include: any }): Promise<${typeName}[]>;`,
-      `      create(clause: import("./morm/query/index.js").CreateClause<${typeName}> & { data: Partial<${typeName}>[]; exclude: any }): Promise<${typeName}[]>;`,
-      `      create(clause: import("./morm/query/index.js").CreateClause<${typeName}> & { data: Partial<${typeName}>; include: any }): Promise<${typeName}>;`,
-      `      create(clause: import("./morm/query/index.js").CreateClause<${typeName}> & { data: Partial<${typeName}>; exclude: any }): Promise<${typeName}>;`,
-      `      create(clause: import("./morm/query/index.js").CreateClause<${typeName}>): Promise<{ count: number }>;`,
+      `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}> & { data: Partial<${inputTypeName}>[]; include: any }): Promise<${typeName}[]>;`,
+      `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}> & { data: Partial<${inputTypeName}>[]; exclude: any }): Promise<${typeName}[]>;`,
+      `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}> & { data: Partial<${inputTypeName}>; include: any }): Promise<${typeName}>;`,
+      `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}> & { data: Partial<${inputTypeName}>; exclude: any }): Promise<${typeName}>;`,
+      `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}>): Promise<{ count: number }>;`,
     );
     lines.push(
       `      find(clause: import("./morm/query/index.js").FindClause<${typeName}> & { count: true }): Promise<import("./morm/query/index.js").AggregationResult>;`,
@@ -220,14 +250,14 @@ export function generateTypes(
   lines.push(``);
   lines.push(`declare module "${modulePath}" {`);
   lines.push(`  interface Morm {`);
-  for (const { table, typeName } of modelTypes) {
+  for (const { table, typeName, inputTypeName } of modelTypes) {
     lines.push(`    ${table}: {`);
     lines.push(
-      `      create(clause: import("./morm/query/index.js").CreateClause<${typeName}> & { data: Partial<${typeName}>[]; include: any }): Promise<${typeName}[]>;`,
-      `      create(clause: import("./morm/query/index.js").CreateClause<${typeName}> & { data: Partial<${typeName}>[]; exclude: any }): Promise<${typeName}[]>;`,
-      `      create(clause: import("./morm/query/index.js").CreateClause<${typeName}> & { data: Partial<${typeName}>; include: any }): Promise<${typeName}>;`,
-      `      create(clause: import("./morm/query/index.js").CreateClause<${typeName}> & { data: Partial<${typeName}>; exclude: any }): Promise<${typeName}>;`,
-      `      create(clause: import("./morm/query/index.js").CreateClause<${typeName}>): Promise<{ count: number }>;`,
+      `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}> & { data: Partial<${inputTypeName}>[]; include: any }): Promise<${typeName}[]>;`,
+      `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}> & { data: Partial<${inputTypeName}>[]; exclude: any }): Promise<${typeName}[]>;`,
+      `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}> & { data: Partial<${inputTypeName}>; include: any }): Promise<${typeName}>;`,
+      `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}> & { data: Partial<${inputTypeName}>; exclude: any }): Promise<${typeName}>;`,
+      `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}>): Promise<{ count: number }>;`,
     );
     lines.push(
       `      find(clause: import("./morm/query/index.js").FindClause<${typeName}> & { count: true }): Promise<import("./morm/query/index.js").AggregationResult>;`,

@@ -11,6 +11,10 @@ import {
   type ExcludeClause,
   type IncludeClause,
 } from "./index.js";
+import {
+  resolveObject,
+  validateNumericString,
+} from "./validation/queryUtility.js";
 
 /* ===================================================== */
 /* HELPERS                                               */
@@ -126,8 +130,11 @@ export async function runCreate(
     }
   }
 
+  /* ---- Resolve functions in data ---- */
+  const resolvedRows = await Promise.all(rows.map((row) => resolveObject(row)));
+
   /* ---- Sanitize all rows ---- */
-  const sanitizedRows = rows.map((row) =>
+  const sanitizedRows = resolvedRows.map((row) =>
     sanitizeRow(row, columns, globalSanitize, schemaSanitize, querySanitize),
   );
 
@@ -162,6 +169,23 @@ export async function runCreate(
           "create",
           table,
         );
+      }
+
+      // Validate string numbers
+      const colDef = columns.find((c: any) => c.name === key);
+      if (colDef && typeof val === "string") {
+        const isNumericCol = [
+          "INT",
+          "INTEGER",
+          "BIGINT",
+          "SMALLINT",
+          "NUMERIC",
+          "DECIMAL",
+          "REAL",
+          "FLOAT8",
+        ].some((t) => String(colDef.type).toUpperCase().startsWith(t));
+        if (isNumericCol)
+          validateNumericString(val, key, table, "create", String(colDef.type));
       }
     }
 
