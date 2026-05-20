@@ -141,11 +141,11 @@ export interface RelationInclude<T = Record<string, any>> {
 }
 
 export type IncludeClause<T = Record<string, any>> = {
-  [K in keyof T]?: true | RelationInclude<T>;
+  [K in keyof T]?: MaybeFunction<true | RelationInclude<T>>;
 };
 
 export type ExcludeClause<T = Record<string, any>> = {
-  [K in keyof T]?: true;
+  [K in keyof T]?: MaybeFunction<true>;
 };
 
 export type OrderByClause<T = Record<string, any>> = {
@@ -155,6 +155,22 @@ export type OrderByClause<T = Record<string, any>> = {
 export type DistinctClause<T = Record<string, any>> = {
   [K in keyof T]?: true;
 };
+
+export type PickInclude<T, I> =
+  I extends Record<string, any> ? Pick<T, Extract<keyof T, keyof I>> : T;
+
+export type OmitExclude<T, E> =
+  E extends Record<string, any> ? Omit<T, Extract<keyof T, keyof E>> : T;
+
+export type ProjectResult<T, C> = C extends { include: infer I }
+  ? [keyof I] extends [never]
+    ? T
+    : PickInclude<T, I>
+  : C extends { exclude: infer E }
+    ? [keyof E] extends [never]
+      ? T
+      : OmitExclude<T, E>
+    : { count: number };
 
 /* ===================================================== */
 /* FIND                                                  */
@@ -211,19 +227,23 @@ export type FindResult<T, C> = C extends { count: true }
         ? AggregationResult
         : C extends { max: any }
           ? AggregationResult
-          : T[];
+          : ProjectResult<T, C>[];
 
 /* ===================================================== */
 /* CREATE                                                */
 /* ===================================================== */
 
+export type MaybeFunctionPartial<T> = {
+  [K in keyof T]?: MaybeFunction<T[K]>;
+};
+
 export interface CreateClause<
   T extends Record<string, any> = Record<string, any>,
 > {
-  data: Partial<T> | Partial<T>[];
-  include?: IncludeClause<T>;
-  exclude?: ExcludeClause<T>;
-  skipDuplicates?: boolean;
+  data: MaybeFunctionPartial<T> | MaybeFunctionPartial<T>[];
+  include?: MaybeFunction<IncludeClause<T>>;
+  exclude?: MaybeFunction<ExcludeClause<T>>;
+  skipDuplicates?: MaybeFunction<boolean>;
   sanitize?: SanitizeConfig;
 }
 

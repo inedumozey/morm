@@ -6,8 +6,9 @@ export const testFine = async (morm: Morm) => {
       const users = await trx.user.find({
         where: { username: async () => "user1" },
         take: async () => 3,
+        include: { id: true },
       });
-      console.log(users);
+      console.log(users[0]?.id);
     });
   } catch (error) {
     console.error("Failed to connect to the database:", error);

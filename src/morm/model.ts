@@ -123,6 +123,7 @@ export function createModelRuntime(
       c.__enumValuesLower = new Set(
         enumDef.values.map((v: string) => v.toLowerCase()),
       );
+      c.__enumValues = new Set(enumDef.values);
     }
 
     /** VALIDATE DEFAULT VALUE -------------------------------------------------- */

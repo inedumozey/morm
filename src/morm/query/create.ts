@@ -13,6 +13,7 @@ import {
 } from "./index.js";
 import {
   resolveObject,
+  resolveValue,
   validateNumericString,
 } from "./validation/queryUtility.js";
 
@@ -105,6 +106,35 @@ export async function runCreate(
   const start = Date.now();
   const normalized = normalizeKeys(clause) as CreateClause;
 
+  /* ---- Resolve clause-level functions ---- */
+  const includeResolved =
+    typeof (normalized as any).include === "function"
+      ? await (normalized as any).include()
+      : (normalized as any).include;
+  const include = includeResolved
+    ? await resolveObject(includeResolved)
+    : includeResolved;
+
+  const excludeResolved =
+    typeof (normalized as any).exclude === "function"
+      ? await (normalized as any).exclude()
+      : (normalized as any).exclude;
+  const exclude = excludeResolved
+    ? await resolveObject(excludeResolved)
+    : excludeResolved;
+
+  const skipDuplicates =
+    typeof (normalized as any).skipduplicates === "function"
+      ? await resolveValue((normalized as any).skipduplicates)
+      : (normalized as any).skipduplicates;
+
+  const resolvedNormalized = {
+    ...normalized,
+    include,
+    exclude,
+    skipDuplicates,
+  };
+
   const isMany = Array.isArray(normalized.data);
   const rows: Record<string, any>[] = isMany
     ? (normalized.data as Record<string, any>[])
@@ -187,6 +217,114 @@ export async function runCreate(
         if (isNumericCol)
           validateNumericString(val, key, table, "create", String(colDef.type));
       }
+
+      // Validate text column receives string value
+      if (colDef && isTextColumn(String(colDef.type))) {
+        if (val !== null && val !== undefined && typeof val !== "string") {
+          throw new MormError(
+            {
+              code: "MORM_INVALID_VALUE",
+              message: `Column "${key}" expects a string value, got "${typeof val}"`,
+              column: key,
+            },
+            "create",
+            table,
+          );
+        }
+      }
+
+      // Validate boolean column
+      if (colDef && String(colDef.type).toUpperCase() === "BOOLEAN") {
+        if (val !== null && val !== undefined && typeof val !== "boolean") {
+          throw new MormError(
+            {
+              code: "MORM_INVALID_VALUE",
+              message: `Column "${key}" expects a boolean value, got "${typeof val}"`,
+              column: key,
+            },
+            "create",
+            table,
+          );
+        }
+      }
+
+      // Validate array column
+      if (colDef && String(colDef.type).toUpperCase().endsWith("[]")) {
+        if (val !== null && val !== undefined && !Array.isArray(val)) {
+          throw new MormError(
+            {
+              code: "MORM_INVALID_VALUE",
+              message: `Column "${key}" expects an array value, got "${typeof val}"`,
+              column: key,
+            },
+            "create",
+            table,
+          );
+        }
+        if (Array.isArray(val)) {
+          const baseType = String(colDef.type).toUpperCase().slice(0, -2);
+          const isTextArray = ["TEXT", "VARCHAR", "CHAR"].some((t) =>
+            baseType.startsWith(t),
+          );
+          const isNumberArray = [
+            "INT",
+            "INTEGER",
+            "BIGINT",
+            "SMALLINT",
+            "NUMERIC",
+            "DECIMAL",
+            "REAL",
+            "FLOAT8",
+          ].some((t) => baseType.startsWith(t));
+          const isBoolArray = baseType === "BOOLEAN";
+          for (const item of val) {
+            if (item === null || item === undefined) continue;
+            if (isTextArray && typeof item !== "string") {
+              throw new MormError(
+                {
+                  code: "MORM_INVALID_VALUE",
+                  message: `Array column "${key}" expects string items, got "${typeof item}"`,
+                  column: key,
+                },
+                "create",
+                table,
+              );
+            }
+            if (isNumberArray && typeof item === "string") {
+              validateNumericString(item, key, table, "create", baseType);
+            }
+            if (isBoolArray && typeof item !== "boolean") {
+              throw new MormError(
+                {
+                  code: "MORM_INVALID_VALUE",
+                  message: `Array column "${key}" expects boolean items, got "${typeof item}"`,
+                  column: key,
+                },
+                "create",
+                table,
+              );
+            }
+          }
+        }
+      }
+
+      // Validate enum column
+      if (colDef && colDef.__isEnum) {
+        if (val !== null && val !== undefined) {
+          const enumValues = colDef.__enumValues as Set<string>;
+          if (!enumValues.has(String(val))) {
+            throw new MormError(
+              {
+                code: "MORM_INVALID_VALUE",
+                message: `Invalid enum value "${val}" for column "${key}" — expected one of: ${[...enumValues].join(", ")}`,
+                column: key,
+              },
+              "create",
+              table,
+            );
+          }
+        }
+      }
     }
 
     // Validate VARCHAR length
@@ -234,7 +372,6 @@ export async function runCreate(
       : "";
 
   /* ---- Determine if we need to return rows ---- */
-  const { include, exclude } = normalized;
   const projection = resolveProjection(include, exclude);
 
   /* ---- Build RETURNING clause ---- */

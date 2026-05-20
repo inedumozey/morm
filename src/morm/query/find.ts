@@ -442,7 +442,10 @@ function buildSelectColumns(
 /* AGGREGATION BUILDER                                   */
 /* ===================================================== */
 
-function buildAggregationSQL(clause: FindClause, table: string): string {
+function buildAggregationSQL(
+  clause: Record<string, any>,
+  table: string,
+): string {
   const parts: string[] = [];
 
   if (clause.count) parts.push(`COUNT(*) AS "count"`);
@@ -460,7 +463,7 @@ function buildAggregationSQL(clause: FindClause, table: string): string {
 
 function parseAggregationResult(
   row: any,
-  clause: FindClause,
+  clause: Record<string, any>,
 ): Record<string, any> {
   const result: Record<string, any> = {};
 
@@ -609,7 +612,7 @@ export async function runFind(
   const isAgg = hasAggregation(resolvedNormalized as FindClause);
 
   if (isAgg) {
-    const aggSQL = buildAggregationSQL(resolvedNormalized as FindClause, table);
+    const aggSQL = buildAggregationSQL(resolvedNormalized, table);
     let sql = `SELECT ${aggSQL} FROM ${q(table)}`;
     if (where) {
       const whereSQL = buildWhere(
@@ -629,10 +632,7 @@ export async function runFind(
         console.log(
           `\x1b[36m  ⚡ find "${table}" — aggregation — ${Date.now() - start}ms\x1b[0m`,
         );
-      return parseAggregationResult(
-        result.rows[0],
-        resolvedNormalized as FindClause,
-      );
+      return parseAggregationResult(result.rows[0], resolvedNormalized);
     } catch (err: any) {
       throwQueryError(err, "find", table);
     }
@@ -817,6 +817,22 @@ export async function runFind(
       console.log(
         `\x1b[36m  ⚡ find "${table}" — ${result.rows.length} rows — ${Date.now() - start}ms\x1b[0m`,
       );
+    const dateCols = columns.filter(
+      (c: any) => String(c.type).toUpperCase() === "DATE",
+    );
+
+    if (dateCols.length > 0) {
+      return result.rows.map((row: any) => {
+        const out = { ...row };
+        for (const col of dateCols) {
+          if (out[col.name] !== null && out[col.name] !== undefined) {
+            out[col.name] = new Date(out[col.name]);
+          }
+        }
+        return out;
+      });
+    }
+
     return result.rows as Record<string, any>[];
   } catch (err: any) {
     if (err.code === "22P02" && after) return [];

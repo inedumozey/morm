@@ -60,7 +60,47 @@ const morm = async (db_url: string) => {
         {
           name: "role",
           type: "USER_ROLE",
-          default: "STAFF",
+          default: "ADMIN",
+        },
+        {
+          name: "count",
+          type: "int[]",
+        },
+        {
+          name: "ids",
+          type: "uuid[]",
+        },
+        {
+          name: "dates",
+          type: "DATE[]",
+        },
+        {
+          name: "count_",
+          type: "int[]",
+        },
+        {
+          name: "countnum_",
+          type: "BOOLEAN[]",
+        },
+        {
+          name: "ids_",
+          type: "uuid[]",
+        },
+        {
+          name: "dates_",
+          type: "DATE[]",
+        },
+        {
+          name: "boolean",
+          type: "BOOLEAN[]",
+        },
+        {
+          name: "datestz_",
+          type: "TIMESTAMPTZ[]",
+        },
+        {
+          name: "time",
+          type: "TIMETZ[]",
         },
       ],
     });
@@ -80,6 +120,7 @@ const morm = async (db_url: string) => {
             relation: "nn",
           },
         },
+        { name: "time", type: "REAL[]" },
       ],
     });
 

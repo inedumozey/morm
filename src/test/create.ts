@@ -46,25 +46,36 @@ export const testCrteate = async (morm: Morm) => {
           account_number: 5,
           state: "Lagos",
           tags: ["javascript"],
-          is_active: 4,
+          is_active: true,
           role: "STAFF",
         },
       ];
 
       const result = await trx.user.create({
         data: {
-          // username: () => "user99",
-          // email: () => "user98@gmail.com",
-          // account_number: () => "5",
-          // state: () => "Plateau",
-          // tags: () => ["javascript"],
+          username: "testuser",
+          email: "test@gmail.com",
+          account_number: 1,
+          state: "Lagos",
+          tags: ["javascript", "typescript"],
           is_active: true,
-          role: "MARKED",
+          role: "ADMIN",
+          count: [1, 2, 3],
+          ids: ["c868b7bb-ba10-4134-8c9d-61da04723d5a"],
+          dates: ["2024-01-01", new Date("2024-06-15")],
+          count_: [4, 5, 6],
+          countnum_: [true, false],
+          ids_: ["c868b7bb-ba10-4134-8c9d-61da04723d5a"],
+          dates_: ["2024-01-01"],
+          boolean: () => [true, false, true],
+          datestz_: ["2024-01-01T00:00:00Z"],
+          time: ["08:00:00+01:00", "12:30:00+01:00"],
         },
         skipDuplicates: true,
+        include: {},
       });
 
-      console.log(result);
+      console.log(result.id);
     });
   } catch (error) {
     console.error("Failed to connect to the database:", error);
