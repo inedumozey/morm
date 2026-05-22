@@ -2,6 +2,12 @@
 
 import { MormError } from "../../utils/queryError.js";
 import type { QueryOperation } from "../../utils/queryError.js";
+import {
+  resolveProjection,
+  type ExcludeClause,
+  type IncludeClause,
+  type WhereClause,
+} from "../index.js";
 
 /* ===================================================== */
 /* COLUMN TYPE CHECKERS                                  */
@@ -159,9 +165,36 @@ export function validateInclude(
   columns: any[],
   table: string,
   operation: QueryOperation,
+  relations?: { incoming: any[]; outgoing: any[] },
 ): void {
+  const relationTables = new Set([
+    ...(relations?.incoming ?? []).map((r: any) =>
+      String(r.fromTable).toLowerCase(),
+    ),
+    ...(relations?.outgoing ?? []).map((r: any) =>
+      String(r.toTable).toLowerCase(),
+    ),
+  ]);
+
   for (const [col, val] of Object.entries(include)) {
-    validateColumnExists(col, columns, table, operation);
+    const colLower = col.toLowerCase();
+    const isColumn = columns.some(
+      (c: any) => c.name === colLower && !c.__virtual,
+    );
+    const isRelation = relationTables.has(colLower);
+
+    if (!isColumn && !isRelation) {
+      throw new MormError(
+        {
+          code: "MORM_INVALID_COLUMN",
+          message: `"include.${col}" is not a column or relation on table "${table}"`,
+          column: col,
+        },
+        operation,
+        table,
+      );
+    }
+
     if (val !== true && (typeof val !== "object" || Array.isArray(val))) {
       throw new MormError(
         {
@@ -312,4 +345,497 @@ export async function resolveObject<T extends Record<string, any>>(
     }
   }
   return result as T;
+}
+
+function parseDate(val: string): Date {
+  return new Date(`${val}T00:00:00.000Z`);
+}
+
+export function parseDateColumns(
+  rows: Record<string, any>[],
+  columns: any[],
+): Record<string, any>[] {
+  const dateCols = columns.filter(
+    (c: any) =>
+      String(c.type).toUpperCase() === "DATE" ||
+      String(c.type).toUpperCase() === "DATE[]",
+  );
+
+  if (dateCols.length === 0) return rows;
+
+  return rows.map((row) => {
+    const out = { ...row };
+    for (const col of dateCols) {
+      if (out[col.name] === null || out[col.name] === undefined) continue;
+      const isArray = String(col.type).toUpperCase() === "DATE[]";
+      if (isArray) {
+        // Handle PostgreSQL array string format: '{2024-01-01,2024-06-15}'
+        let arr = out[col.name];
+        if (typeof arr === "string") {
+          arr = arr
+            .replace(/^\{|\}$/g, "")
+            .split(",")
+            .filter(Boolean);
+        }
+        if (Array.isArray(arr)) {
+          out[col.name] = arr.map((v: any) =>
+            typeof v === "string" ? parseDate(v) : v,
+          );
+        }
+      } else if (!isArray && typeof out[col.name] === "string") {
+        out[col.name] = parseDate(out[col.name]);
+      }
+    }
+    return out;
+  });
+}
+
+export function q(n: string) {
+  return `"${n.replace(/"/g, '""')}"`;
+}
+
+/* ===================================================== */
+/* WHERE BUILDER                                         */
+/* ===================================================== */
+
+export function buildWhere(
+  where: WhereClause,
+  params: any[],
+  tableAlias?: string,
+  columns?: any[],
+  table?: string,
+  queryMode?: "sensitive" | "insensitive",
+): string {
+  const parts: string[] = [];
+  const prefix = tableAlias ? `${q(tableAlias)}.` : "";
+
+  for (const [key, value] of Object.entries(where)) {
+    const keyLower = key.toLowerCase();
+
+    /* ---- AND ---- */
+    if (keyLower === "and" && Array.isArray(value)) {
+      const andParts = (value as WhereClause[]).map((w) =>
+        buildWhere(w, params, tableAlias, columns, table, queryMode),
+      );
+      if (andParts.length > 0) {
+        parts.push(`(${andParts.join(" AND ")})`);
+      }
+      continue;
+    }
+
+    /* ---- OR ---- */
+    if (keyLower === "or" && Array.isArray(value)) {
+      const orParts = (value as WhereClause[]).map((w) =>
+        buildWhere(w, params, tableAlias, columns, table, queryMode),
+      );
+      if (orParts.length > 0) {
+        parts.push(`(${orParts.join(" OR ")})`);
+      }
+      continue;
+    }
+
+    const col = `${prefix}${q(keyLower)}`;
+
+    /* ---- NULL ---- */
+    if (value === null) {
+      parts.push(`${col} IS NULL`);
+      continue;
+    }
+
+    /* ---- Scalar / operators ---- */
+    if (typeof value === "object" && !Array.isArray(value)) {
+      const ops = value as Record<string, any>;
+      const opParts: string[] = [];
+
+      for (const [op, opVal] of Object.entries(ops)) {
+        const opLower = op.toLowerCase();
+
+        // Validate scalar operators not used on array columns
+        const colDef = columns?.find((c: any) => c.name === keyLower);
+        const colType = String(colDef?.type ?? "").toUpperCase();
+        const isArrayCol = colType.endsWith("[]");
+        const isTextCol = ["TEXT", "VARCHAR", "CHAR"].some((t) =>
+          colType.startsWith(t),
+        );
+        const isNumberCol = [
+          "INT",
+          "INTEGER",
+          "BIGINT",
+          "SMALLINT",
+          "NUMERIC",
+          "DECIMAL",
+          "REAL",
+          "FLOAT8",
+        ].some((t) => colType.startsWith(t));
+        const isBoolCol = colType === "BOOLEAN";
+        const isDateCol = ["TIMESTAMP", "DATE", "TIME"].some((t) =>
+          colType.startsWith(t),
+        );
+
+        const textOnlyOps = [
+          "contains",
+          "startswith",
+          "endswith",
+          "notcontains",
+          "notstartswith",
+          "notendswith",
+        ];
+        const numericOps = ["gt", "gte", "lt", "lte"];
+        const arrayOnlyOps = ["hasany", "hasevery"];
+        const basicOps = ["eq", "not"];
+
+        if (colDef) {
+          if (isArrayCol && !arrayOnlyOps.includes(opLower)) {
+            throw new MormError(
+              {
+                code: "MORM_INVALID_OPERATOR",
+                message: `Operator "${opLower}" cannot be used on array column "${keyLower}"`,
+                column: keyLower,
+              },
+              "find",
+              table,
+            );
+          }
+          if (arrayOnlyOps.includes(opLower) && !isArrayCol) {
+            throw new MormError(
+              {
+                code: "MORM_INVALID_OPERATOR",
+                message: `Operator "${opLower}" can only be used on array columns. Column "${keyLower}" is type "${colDef.type}"`,
+                column: keyLower,
+              },
+              "find",
+              table,
+            );
+          }
+          if (textOnlyOps.includes(opLower) && !isTextCol) {
+            throw new MormError(
+              {
+                code: "MORM_INVALID_OPERATOR",
+                message: `Operator "${opLower}" can only be used on text columns. Column "${keyLower}" is type "${colDef.type}"`,
+                column: keyLower,
+              },
+              "find",
+              table,
+            );
+          }
+          if (numericOps.includes(opLower) && (isBoolCol || isTextCol)) {
+            throw new MormError(
+              {
+                code: "MORM_INVALID_OPERATOR",
+                message: `Operator "${opLower}" cannot be used on ${isBoolCol ? "boolean" : "text"} column "${keyLower}"`,
+                column: keyLower,
+              },
+              "find",
+              table,
+            );
+          }
+          if (
+            (opLower === "eq" ||
+              opLower === "not" ||
+              numericOps.includes(opLower)) &&
+            opVal !== null
+          ) {
+            if (isNumberCol && typeof opVal !== "number") {
+              throw new MormError(
+                {
+                  code: "MORM_INVALID_VALUE",
+                  message: `Operator "${opLower}" expects a number value, got "${typeof opVal}" for column "${keyLower}"`,
+                  column: keyLower,
+                },
+                "find",
+                table,
+              );
+            }
+            if (isBoolCol && typeof opVal !== "boolean") {
+              throw new MormError(
+                {
+                  code: "MORM_INVALID_VALUE",
+                  message: `Operator "${opLower}" expects a boolean value, got "${typeof opVal}" for column "${keyLower}"`,
+                  column: keyLower,
+                },
+                "find",
+                table,
+              );
+            }
+
+            if (textOnlyOps.includes(opLower) && typeof opVal !== "string") {
+              throw new MormError(
+                {
+                  code: "MORM_INVALID_VALUE",
+                  message: `Operator "${opLower}" on column "${keyLower}" expects a string value`,
+                  column: keyLower,
+                },
+                "find",
+                table,
+              );
+            }
+            if (arrayOnlyOps.includes(opLower) && !Array.isArray(opVal)) {
+              throw new MormError(
+                {
+                  code: "MORM_INVALID_VALUE",
+                  message: `Operator "${opLower}" on column "${keyLower}" expects an array value`,
+                  column: keyLower,
+                },
+                "find",
+                table,
+              );
+            }
+          }
+        }
+        switch (opLower) {
+          case "eq":
+            if (opVal === null) {
+              opParts.push(`${col} IS NULL`);
+            } else {
+              const fieldMode = (ops as any).mode;
+              const isInsensitive =
+                fieldMode !== undefined
+                  ? fieldMode === "insensitive"
+                  : queryMode === "insensitive";
+              if (isDateCol) {
+                params.push(opVal);
+                opParts.push(buildDateComparison(col, "=", params.length));
+              } else {
+                params.push(
+                  isInsensitive ? String(opVal).toLowerCase() : opVal,
+                );
+                opParts.push(
+                  isInsensitive
+                    ? `LOWER(${col}) = $${params.length}`
+                    : `${col} = $${params.length}`,
+                );
+              }
+            }
+            break;
+          case "not":
+            if (opVal === null) {
+              opParts.push(`${col} IS NOT NULL`);
+            } else {
+              const fieldMode = (ops as any).mode;
+              const isInsensitive =
+                fieldMode !== undefined
+                  ? fieldMode === "insensitive"
+                  : queryMode === "insensitive";
+              if (isDateCol) {
+                params.push(opVal);
+                opParts.push(buildDateComparison(col, "!=", params.length));
+              } else {
+                params.push(
+                  isInsensitive ? String(opVal).toLowerCase() : opVal,
+                );
+                opParts.push(
+                  isInsensitive
+                    ? `LOWER(${col}) != $${params.length}`
+                    : `${col} != $${params.length}`,
+                );
+              }
+            }
+            break;
+          case "mode":
+            break; // handled in eq/not
+          case "gt":
+            params.push(opVal);
+            opParts.push(`${col} > $${params.length}`);
+            break;
+          case "gte":
+            params.push(opVal);
+            opParts.push(`${col} >= $${params.length}`);
+            break;
+          case "lt":
+            params.push(opVal);
+            opParts.push(`${col} < $${params.length}`);
+            break;
+          case "lte":
+            params.push(opVal);
+            opParts.push(`${col} <= $${params.length}`);
+            break;
+          case "contains": {
+            const isInsensitive =
+              (ops as any).mode === "insensitive" ||
+              queryMode === "insensitive";
+            params.push(`%${opVal}%`);
+            opParts.push(
+              `${col} ${isInsensitive ? "ILIKE" : "LIKE"} $${params.length}`,
+            );
+            break;
+          }
+          case "startswith": {
+            const isInsensitive =
+              (ops as any).mode === "insensitive" ||
+              queryMode === "insensitive";
+            params.push(`${opVal}%`);
+            opParts.push(
+              `${col} ${isInsensitive ? "ILIKE" : "LIKE"} $${params.length}`,
+            );
+            break;
+          }
+          case "endswith": {
+            const isInsensitive =
+              (ops as any).mode === "insensitive" ||
+              queryMode === "insensitive";
+            params.push(`%${opVal}`);
+            opParts.push(
+              `${col} ${isInsensitive ? "ILIKE" : "LIKE"} $${params.length}`,
+            );
+            break;
+          }
+          case "notcontains": {
+            const isInsensitive =
+              (ops as any).mode === "insensitive" ||
+              queryMode === "insensitive";
+            params.push(`%${opVal}%`);
+            opParts.push(
+              `${col} ${isInsensitive ? "NOT ILIKE" : "NOT LIKE"} $${params.length}`,
+            );
+            break;
+          }
+          case "notstartswith": {
+            const isInsensitive =
+              (ops as any).mode === "insensitive" ||
+              queryMode === "insensitive";
+            params.push(`${opVal}%`);
+            opParts.push(
+              `${col} ${isInsensitive ? "NOT ILIKE" : "NOT LIKE"} $${params.length}`,
+            );
+            break;
+          }
+          case "notendswith": {
+            const isInsensitive =
+              (ops as any).mode === "insensitive" ||
+              queryMode === "insensitive";
+            params.push(`%${opVal}`);
+            opParts.push(
+              `${col} ${isInsensitive ? "NOT ILIKE" : "NOT LIKE"} $${params.length}`,
+            );
+            break;
+          }
+          case "hasany":
+          case "hasevery": {
+            params.push(opVal);
+            opParts.push(
+              opLower === "hasany"
+                ? `${col} && $${params.length}`
+                : `${col} @> $${params.length}`,
+            );
+            break;
+          }
+          default:
+            throw new MormError(
+              {
+                code: "MORM_INVALID_OPERATOR",
+                message: `Unknown operator "${op}" on column "${keyLower}"`,
+                column: keyLower,
+              },
+              "find",
+              table,
+            );
+        }
+      }
+
+      if (opParts.length > 0) {
+        parts.push(opParts.join(" AND "));
+      }
+      continue;
+    }
+
+    /* ---- Basic equality ---- */
+    const basicColDef = columns?.find((c: any) => c.name === keyLower);
+    const basicColType = String(basicColDef?.type ?? "").toUpperCase();
+    const basicIsTextCol = ["TEXT", "VARCHAR", "CHAR"].some((t) =>
+      basicColType.startsWith(t),
+    );
+    const basicIsDateCol = ["TIMESTAMP", "DATE", "TIME"].some((t) =>
+      basicColType.startsWith(t),
+    );
+
+    if (basicIsDateCol) {
+      params.push(value);
+      parts.push(buildDateComparison(col, "=", params.length));
+    } else if (queryMode === "insensitive" && basicIsTextCol) {
+      params.push(String(value).toLowerCase());
+      parts.push(`LOWER(${col}) = $${params.length}`);
+    } else {
+      params.push(value);
+      parts.push(`${col} = $${params.length}`);
+    }
+  }
+
+  return parts.length > 0 ? parts.join(" AND ") : "TRUE";
+}
+
+/* ===================================================== */
+/* SELECT COLUMNS BUILDER                                */
+/* ===================================================== */
+
+export function buildSelectColumns(
+  columns: any[],
+  include?: IncludeClause,
+  exclude?: ExcludeClause,
+  tableAlias?: string,
+): string {
+  const prefix = tableAlias ? `${q(tableAlias)}.` : "";
+  const scalarCols = columns.filter((c) => !c.__virtual);
+  const projection = resolveProjection(include, exclude);
+
+  let selectedCols: any[];
+
+  if (projection.mode === "include") {
+    const includeKeys = new Set(
+      Object.entries(include ?? {})
+        .filter(([, v]) => v === true)
+        .map(([k]) => k.toLowerCase()),
+    );
+    selectedCols = scalarCols.filter((c) => includeKeys.has(c.name));
+  } else if (projection.mode === "exclude") {
+    const excludeKeys = new Set(
+      Object.keys(exclude ?? {}).map((k) => k.toLowerCase()),
+    );
+    selectedCols = scalarCols.filter((c) => !excludeKeys.has(c.name));
+  } else {
+    selectedCols = scalarCols;
+  }
+
+  if (selectedCols.length === 0) return `${prefix}*`;
+
+  return selectedCols.map((c) => `${prefix}${q(c.name)}`).join(", ");
+}
+
+/* ===================================================== */
+/* AGGREGATION BUILDER                                   */
+/* ===================================================== */
+
+export function buildAggregationSQL(
+  clause: Record<string, any>,
+  table: string,
+): string {
+  const parts: string[] = [];
+
+  if (clause.count) parts.push(`COUNT(*) AS "count"`);
+  if (clause.sum)
+    parts.push(`SUM(${q(table)}.${q(clause.sum)}) AS "sum_${clause.sum}"`);
+  if (clause.avg)
+    parts.push(`AVG(${q(table)}.${q(clause.avg)}) AS "avg_${clause.avg}"`);
+  if (clause.min)
+    parts.push(`MIN(${q(table)}.${q(clause.min)}) AS "min_${clause.min}"`);
+  if (clause.max)
+    parts.push(`MAX(${q(table)}.${q(clause.max)}) AS "max_${clause.max}"`);
+
+  return parts.join(", ");
+}
+
+export function parseAggregationResult(
+  row: any,
+  clause: Record<string, any>,
+): Record<string, any> {
+  const result: Record<string, any> = {};
+
+  if (clause.count) result.count = parseInt(row.count ?? "0");
+  if (clause.sum)
+    result.sum = { [clause.sum]: parseFloat(row[`sum_${clause.sum}`] ?? "0") };
+  if (clause.avg)
+    result.avg = { [clause.avg]: parseFloat(row[`avg_${clause.avg}`] ?? "0") };
+  if (clause.min) result.min = { [clause.min]: row[`min_${clause.min}`] };
+  if (clause.max) result.max = { [clause.max]: row[`max_${clause.max}`] };
+
+  return result;
 }

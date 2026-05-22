@@ -20,7 +20,6 @@ export function validateFindClause(
   normalized: any,
   table: string,
   columns: any[],
-  model?: any,
 ): void {
   /* ---- Validate unknown keys ---- */
   const validClauseKeys = new Set([
@@ -179,13 +178,7 @@ export function validateFindClause(
 
   /* ---- Validate include ---- */
   if (normalized.include && Object.keys(normalized.include).length > 0) {
-    validateInclude(
-      normalized.include,
-      columns,
-      table,
-      "find",
-      model?._relations,
-    );
+    validateInclude(normalized.include, columns, table, "find");
   }
 
   /* ---- Validate exclude ---- */

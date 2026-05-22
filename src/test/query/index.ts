@@ -176,9 +176,9 @@ export type ProjectResult<T, C> = C extends { include: infer I }
 /* FIND                                                  */
 /* ===================================================== */
 
-export interface FindClause<T = Record<string, any>, I = IncludeClause<T>> {
+export interface FindClause<T = Record<string, any>> {
   where?: MaybeFunction<WhereClause<T>>;
-  include?: MaybeFunction<I>;
+  include?: MaybeFunction<IncludeClause<T>>;
   exclude?: MaybeFunction<ExcludeClause<T>>;
   orderBy?: MaybeFunction<OrderByClause<T>>;
   take?: MaybeFunction<number>;
@@ -199,9 +199,9 @@ export interface FindClause<T = Record<string, any>, I = IncludeClause<T>> {
 /* FIND ONE                                              */
 /* ===================================================== */
 
-export interface FindOneClause<T = Record<string, any>, I = IncludeClause<T>> {
+export interface FindOneClause<T = Record<string, any>> {
   where?: MaybeFunction<WhereClause<T>>;
-  include?: MaybeFunction<I>;
+  include?: MaybeFunction<IncludeClause<T>>;
   exclude?: MaybeFunction<ExcludeClause<T>>;
   mode?: MaybeFunction<Mode>;
 }

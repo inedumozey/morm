@@ -4,11 +4,15 @@ export const testFine = async (morm: Morm) => {
   try {
     await morm.transaction(async (trx) => {
       const users = await trx.user.find({
-        where: { username: async () => "user1" },
-        take: async () => 3,
-        include: { id: true },
+        include: {
+          profile: true, // should autocomplete
+          post: {
+            // should autocomplete
+            where: {},
+            take: 1,
+          },
+        },
       });
-      console.log(users[0]?.id);
     });
   } catch (error) {
     console.error("Failed to connect to the database:", error);

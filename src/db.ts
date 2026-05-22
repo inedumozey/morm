@@ -20,88 +20,22 @@ const morm = async (db_url: string) => {
     morm!.model({
       table: "user",
       columns: [
-        {
-          name: "id",
-          type: "uuid",
-          primary: true,
-          default: "uuid()",
-        },
-        {
-          name: "username",
-          type: "text",
-          sanitize: { trim: true },
-        },
+        { name: "id", type: "uuid", primary: true, default: "uuid()" },
+        { name: "username", type: "text", sanitize: { trim: true } },
         {
           name: "email",
           type: "text",
           sanitize: { trim: true, case: "lower" },
         },
-        {
-          name: "account_number",
-          type: "INT",
-          sanitize: { trim: true },
-        },
-        {
-          name: "initials",
-          type: "VARCHAR(4)",
-          default: "Mr.",
-          sanitize: { trim: true },
-        },
+        { name: "account_number", type: "INT" },
         { name: "state", type: "text" },
-        {
-          name: "tags",
-          type: "text[]",
-        },
-        {
-          name: "is_active",
-          type: "BOOLEAN",
-          default: true,
-        },
-        {
-          name: "role",
-          type: "USER_ROLE",
-          default: "ADMIN",
-        },
-        {
-          name: "count",
-          type: "int[]",
-        },
-        {
-          name: "ids",
-          type: "uuid[]",
-        },
-        {
-          name: "dates",
-          type: "DATE[]",
-        },
-        {
-          name: "count_",
-          type: "int[]",
-        },
-        {
-          name: "countnum_",
-          type: "BOOLEAN[]",
-        },
-        {
-          name: "ids_",
-          type: "uuid[]",
-        },
-        {
-          name: "dates_",
-          type: "DATE[]",
-        },
-        {
-          name: "boolean",
-          type: "BOOLEAN[]",
-        },
-        {
-          name: "datestz_",
-          type: "TIMESTAMPTZ[]",
-        },
-        {
-          name: "time",
-          type: "TIMETZ[]",
-        },
+        { name: "is_active", type: "BOOLEAN", default: true },
+        { name: "role", type: "USER_ROLE", default: "STAFF" },
+      ],
+      indexes: [
+        "state",
+        ["username", "email"],
+        { columns: "is_active", where: "is_active == true" },
       ],
     });
 
@@ -114,17 +48,42 @@ const morm = async (db_url: string) => {
         {
           name: "user_id",
           type: "uuid",
-          references: {
-            table: "user",
-            column: "id",
-            relation: "nn",
-          },
+          unique: true,
+          references: { table: "user", column: "id", relation: "nn" },
         },
-        { name: "time", type: "REAL[]" },
       ],
+      indexes: ["user_id"],
     });
 
-    // await morm?.migrate();
+    morm!.model({
+      table: "post",
+      columns: [
+        { name: "id", type: "uuid", primary: true, default: "uuid()" },
+        { name: "title", type: "text", notNull: true },
+        { name: "body", type: "text" },
+        {
+          name: "user_id",
+          type: "uuid",
+          references: { table: "user", column: "id", relation: "nm" },
+        },
+        {
+          name: "tag_ids",
+          type: "uuid[]",
+          references: { table: "tag", column: "id", relation: "mm" },
+        },
+      ],
+      indexes: ["user_id", "title"],
+    });
+
+    morm!.model({
+      table: "tag",
+      columns: [
+        { name: "id", type: "uuid", primary: true, default: "uuid()" },
+        { name: "name", type: "text", notNull: true, unique: true },
+      ],
+      indexes: ["name"],
+    });
+    await morm?.migrate();
     // await morm?.migrate({ reset: true });
 
     return morm;

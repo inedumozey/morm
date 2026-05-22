@@ -1,6 +1,11 @@
 // morm.ts
 
-import { Pool } from "pg";
+import pg from "pg";
+const { Pool } = pg;
+
+// Tell pg to return DATE and DATE[] as strings — MORM handles parsing
+pg.types.setTypeParser(1082, (val: string) => val); // DATE
+pg.types.setTypeParser(1182 as any, (val: string) => val); // DATE[]
 
 import { createModelRuntime } from "./model.js";
 import { validateAndSortModels } from "./utils/relationValidator.js";
@@ -14,7 +19,8 @@ import { reporter } from "./utils/migrationReporter.js";
 import type { SanitizeConfig } from "./utils/sanitize.js";
 import { runCreate } from "./query/create.js";
 import type { CreateClause, FindClause, FindOneClause } from "./query/index.js";
-import { runFind, runFindOne } from "./query/find.js";
+import { runFind } from "./query/runFind.js";
+import { runFindOne } from "./query/findOne.js";
 
 export interface TransactionOptions {
   maxWait?: number;
@@ -35,6 +41,7 @@ export class Morm {
   private options?: MormOptions | undefined;
   private models: any[] = [];
   private modelMap = new Map<string, any>(); // fix #7 — lookup by table name
+  private _relationsResolved: boolean = false;
   private _migrating: boolean = false;
   private enumRegistry = new EnumRegistry();
   private _sanitize: SanitizeConfig | undefined = undefined;
@@ -267,6 +274,17 @@ export class Morm {
     table: string,
     client: any,
   ) {
+    if (!this._relationsResolved) {
+      const relRes = validateAndSortModels(this.models);
+      if (relRes.sorted) {
+        this.models = relRes.sorted;
+        for (const model of this.models) {
+          this.modelMap.set(model.table, model);
+        }
+      }
+      this._relationsResolved = true;
+    }
+
     const model = this.modelMap.get(table);
     if (!model) throw new Error(`Table "${table}" is not registered`);
 
@@ -280,9 +298,10 @@ export class Morm {
         },
       ) =>
         runCreate(client, model, clause as CreateClause, globalSanitize, debug),
-      find: (clause?: FindClause) => runFind(client, model, clause, debug),
+      find: (clause?: FindClause) =>
+        runFind(client, model, clause, debug, this.modelMap),
       findOne: (clause?: FindOneClause) =>
-        runFindOne(client, model, clause, undefined, debug),
+        runFindOne(client, model, clause, debug, this.modelMap),
     };
   }
 
@@ -339,6 +358,14 @@ export class Morm {
     }
 
     if (relRes.sorted) this.models = relRes.sorted;
+
+    if (relRes.sorted) {
+      this.models = relRes.sorted;
+      // Update modelMap with sorted models that have _relations
+      for (const model of this.models) {
+        this.modelMap.set(model.table, model);
+      }
+    }
 
     /* ---- PHASE 2 — Out-of-transaction (enums + reset) ---- */
     const enumClient = await this.pool.connect();

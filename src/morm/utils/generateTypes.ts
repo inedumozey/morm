@@ -142,8 +142,9 @@ function generateModelType(
     const required = isRequired(col);
     const nullable = !required && col.notNull !== true;
 
+    const isArrayType = tsType.endsWith("[]") || tsType.endsWith("]");
     lines.push(
-      `    ${col.name}${required ? "" : "?"}: ${tsType}${nullable ? " | null" : ""};`,
+      `    ${col.name}: ${tsType}${nullable && !isArrayType ? " | null" : ""};`,
     );
   }
 
@@ -220,19 +221,72 @@ export function generateTypes(
     modelTypes.push({ table: model.table, typeName, inputTypeName });
   }
 
+  // Generate relation clause types per model
+  for (const model of models) {
+    const typeName = `${toPascalCase(model.table)}Type`;
+    const incoming = (model._relations?.incoming ?? []) as any[];
+    const outgoing = (model._relations?.outgoing ?? []) as any[];
+
+    const colKeys = model.columns
+      .filter((c: any) => !c.__virtual)
+      .map((c: any) => `      ${c.name}?: true;`)
+      .join("\n");
+
+    const relKeys: string[] = [];
+    for (const rel of incoming) {
+      const relTable = String(rel.fromTable).toLowerCase();
+      const relTypeName = `${toPascalCase(relTable)}Type`;
+      relKeys.push(
+        `      ${relTable}?: true | ${relTypeName}RelationClause | (() => ${relTypeName}RelationClause) | (() => Promise<${relTypeName}RelationClause>);`,
+      );
+    }
+    for (const rel of outgoing) {
+      const relTable = String(rel.toTable).toLowerCase();
+      const relTypeName = `${toPascalCase(relTable)}Type`;
+      relKeys.push(
+        `      ${relTable}?: true | ${relTypeName}RelationClause | (() => ${relTypeName}RelationClause) | (() => Promise<${relTypeName}RelationClause>);`,
+      );
+    }
+
+    lines.push(`  type ${typeName}RelationClause = {`);
+    lines.push(`    where?: any;`);
+    lines.push(`    orderBy?: any;`);
+    lines.push(`    take?: number;`);
+    lines.push(`    page?: number;`);
+    lines.push(`    after?: any;`);
+    lines.push(`    distinct?: any;`);
+    lines.push(`    mode?: "sensitive" | "insensitive";`);
+    lines.push(`    count?: boolean;`);
+    lines.push(`    sum?: string;`);
+    lines.push(`    avg?: string;`);
+    lines.push(`    min?: string;`);
+    lines.push(`    max?: string;`);
+    if (colKeys) lines.push(colKeys);
+    if (relKeys.length > 0) lines.push(relKeys.join("\n"));
+    lines.push(`  };`);
+    lines.push(``);
+
+    lines.push(`  type ${typeName}IncludeClause = {`);
+    if (colKeys) lines.push(colKeys);
+    if (relKeys.length > 0) lines.push(relKeys.join("\n"));
+    lines.push(`  };`);
+    lines.push(``);
+  }
+
   // MormDB type — used inside transaction
   lines.push(`  type MormDB = {`);
   for (const { table, typeName, inputTypeName } of modelTypes) {
     lines.push(`    ${table}: {`);
     lines.push(
-      `      create<C extends import("./morm/query/index.js").CreateClause<${inputTypeName}>>(clause: C & { data: import("./morm/query/index.js").MaybeFunctionPartial<${inputTypeName}>[] }): Promise<C extends { include: any } | { exclude: any } ? import("./morm/query/index.js").ProjectResult<${typeName}, C>[] : { count: number }>;`,
-      `      create<C extends import("./morm/query/index.js").CreateClause<${inputTypeName}>>(clause: C & { data: import("./morm/query/index.js").MaybeFunctionPartial<${inputTypeName}> }): Promise<C extends { include: any } | { exclude: any } ? import("./morm/query/index.js").ProjectResult<${typeName}, C> : { count: number }>;`,
+      `      create<C extends import("./morm/query/index.js").CreateClause<${inputTypeName}>>(clause: C & { data: import("./morm/query/index.js").MaybeFunctionPartial<${inputTypeName}>[] } & ({ include: any } | { exclude: any })): Promise<import("./morm/query/index.js").ProjectResult<${typeName}, C>[]>;`,
+      `      create<C extends import("./morm/query/index.js").CreateClause<${inputTypeName}>>(clause: C & { data: import("./morm/query/index.js").MaybeFunctionPartial<${inputTypeName}> } & ({ include: any } | { exclude: any })): Promise<import("./morm/query/index.js").ProjectResult<${typeName}, C>>;`,
+      `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}> & { data: import("./morm/query/index.js").MaybeFunctionPartial<${inputTypeName}> | import("./morm/query/index.js").MaybeFunctionPartial<${inputTypeName}>[] }): Promise<{ count: number }>;`,
     );
     lines.push(
-      `      find<C extends import("./morm/query/index.js").FindClause<${typeName}>>(clause?: C): Promise<import("./morm/query/index.js").FindResult<${typeName}, C>>;`,
+      `      find<C extends import("./morm/query/index.js").FindClause<${typeName}, ${typeName}IncludeClause>>(clause?: C): Promise<import("./morm/query/index.js").FindResult<${typeName}, C>>;`,
     );
     lines.push(
-      `      findOne: (clause?: import("./morm/query/index.js").FindOneClause<${typeName}>) => Promise<${typeName} | null>;`,
+      `      findOne<C extends import("./morm/query/index.js").FindOneClause<${typeName}, ${typeName}IncludeClause>>(clause?: C): Promise<import("./morm/query/index.js").ProjectResult<${typeName}, C> | null>;`,
     );
     lines.push(
       `      update: (clause: import("./morm/query/index.js").UpdateClause<${typeName}>) => Promise<{ count: number }>;`,
@@ -258,14 +312,15 @@ export function generateTypes(
   for (const { table, typeName, inputTypeName } of modelTypes) {
     lines.push(`    ${table}: {`);
     lines.push(
-      `      create<C extends import("./morm/query/index.js").CreateClause<${inputTypeName}>>(clause: C & { data: import("./morm/query/index.js").MaybeFunctionPartial<${inputTypeName}>[] }): Promise<C extends { include: any } | { exclude: any } ? import("./morm/query/index.js").ProjectResult<${typeName}, C>[] : { count: number }>;`,
-      `      create<C extends import("./morm/query/index.js").CreateClause<${inputTypeName}>>(clause: C & { data: import("./morm/query/index.js").MaybeFunctionPartial<${inputTypeName}> }): Promise<C extends { include: any } | { exclude: any } ? import("./morm/query/index.js").ProjectResult<${typeName}, C> : { count: number }>;`,
+      `      create<C extends import("./morm/query/index.js").CreateClause<${inputTypeName}>>(clause: C & { data: import("./morm/query/index.js").MaybeFunctionPartial<${inputTypeName}>[] } & ({ include: any } | { exclude: any })): Promise<import("./morm/query/index.js").ProjectResult<${typeName}, C>[]>;`,
+      `      create<C extends import("./morm/query/index.js").CreateClause<${inputTypeName}>>(clause: C & { data: import("./morm/query/index.js").MaybeFunctionPartial<${inputTypeName}> } & ({ include: any } | { exclude: any })): Promise<import("./morm/query/index.js").ProjectResult<${typeName}, C>>;`,
+      `      create(clause: import("./morm/query/index.js").CreateClause<${inputTypeName}> & { data: import("./morm/query/index.js").MaybeFunctionPartial<${inputTypeName}> | import("./morm/query/index.js").MaybeFunctionPartial<${inputTypeName}>[] }): Promise<{ count: number }>;`,
     );
     lines.push(
-      `      find<C extends import("./morm/query/index.js").FindClause<${typeName}>>(clause?: C): Promise<import("./morm/query/index.js").FindResult<${typeName}, C>>;`,
+      `      find<C extends import("./morm/query/index.js").FindClause<${typeName}, ${typeName}IncludeClause>>(clause?: C): Promise<import("./morm/query/index.js").FindResult<${typeName}, C>>;`,
     );
     lines.push(
-      `      findOne: (clause?: import("./morm/query/index.js").FindOneClause<${typeName}>) => Promise<${typeName} | null>;`,
+      `      findOne<C extends import("./morm/query/index.js").FindOneClause<${typeName}, ${typeName}IncludeClause>>(clause?: C): Promise<import("./morm/query/index.js").ProjectResult<${typeName}, C> | null>;`,
     );
     lines.push(
       `      update: (clause: import("./morm/query/index.js").UpdateClause<${typeName}>) => Promise<{ count: number }>;`,

@@ -84,8 +84,14 @@ export class MormError extends Error {
     ].includes(code);
     const columnPart =
       column && !skipColumnPart ? ` on column "${column}"` : "";
+
     const tablePart =
-      table && !columnPart && code !== "42P01" ? ` on table "${table}"` : "";
+      table &&
+      !columnPart &&
+      code !== "42P01" &&
+      !baseMessage.includes(`on table`)
+        ? ` on table "${table}"`
+        : "";
 
     super(`${baseMessage}${columnPart}${tablePart}`);
 
@@ -107,5 +113,6 @@ export function throwQueryError(
   operation: QueryOperation,
   table?: string,
 ): never {
+  if (err instanceof MormError) throw err;
   throw new MormError(err, operation, table);
 }

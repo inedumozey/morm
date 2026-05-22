@@ -297,19 +297,20 @@ export function createModelRuntime(
     sanitize: config.sanitize ?? undefined,
 
     async migrate(client: any, createdTables?: Set<string>) {
-      if (createdTables?.has(config.table)) return true;
-
       try {
-        const ok = await diffTable(
-          client,
-          {
-            table: config.table,
-            ...(config.primaryKey && { primaryKey: config.primaryKey }),
-          },
-          processed,
-        );
-        if (!ok)
-          throw new Error(`Migration failed for table "${config.table}"`);
+        const isNew = createdTables?.has(config.table);
+        if (!isNew) {
+          const ok = await diffTable(
+            client,
+            {
+              table: config.table,
+              ...(config.primaryKey && { primaryKey: config.primaryKey }),
+            },
+            processed,
+          );
+          if (!ok)
+            throw new Error(`Migration failed for table "${config.table}"`);
+        }
 
         await ensureUpdatedAtTrigger(client);
 

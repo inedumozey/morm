@@ -11,13 +11,12 @@ import {
   type IncludeClause,
   type ExcludeClause,
   type WhereClause,
-  type OrderByClause,
-  type DistinctClause,
 } from "./index.js";
 
 import { validateWhereClause } from "./validation/whereClause.js";
 import {
   buildDateComparison,
+  parseDateColumns,
   resolveObject,
   resolveValue,
   validateColumnExists,
@@ -35,7 +34,7 @@ function q(n: string) {
 /* WHERE BUILDER                                         */
 /* ===================================================== */
 
-function buildWhere(
+export function buildWhere(
   where: WhereClause,
   params: any[],
   tableAlias?: string,
@@ -45,7 +44,6 @@ function buildWhere(
 ): string {
   const parts: string[] = [];
   const prefix = tableAlias ? `${q(tableAlias)}.` : "";
-  validateFindClause;
 
   for (const [key, value] of Object.entries(where)) {
     const keyLower = key.toLowerCase();
@@ -405,7 +403,7 @@ function buildWhere(
 /* SELECT COLUMNS BUILDER                                */
 /* ===================================================== */
 
-function buildSelectColumns(
+export function buildSelectColumns(
   columns: any[],
   include?: IncludeClause,
   exclude?: ExcludeClause,
@@ -817,23 +815,7 @@ export async function runFind(
       console.log(
         `\x1b[36m  ⚡ find "${table}" — ${result.rows.length} rows — ${Date.now() - start}ms\x1b[0m`,
       );
-    const dateCols = columns.filter(
-      (c: any) => String(c.type).toUpperCase() === "DATE",
-    );
-
-    if (dateCols.length > 0) {
-      return result.rows.map((row: any) => {
-        const out = { ...row };
-        for (const col of dateCols) {
-          if (out[col.name] !== null && out[col.name] !== undefined) {
-            out[col.name] = new Date(out[col.name]);
-          }
-        }
-        return out;
-      });
-    }
-
-    return result.rows as Record<string, any>[];
+    return parseDateColumns(result.rows, columns) as Record<string, any>[];
   } catch (err: any) {
     if (err.code === "22P02" && after) return [];
     throwQueryError(err, "find", table);
@@ -854,7 +836,35 @@ export async function runFindOne(
   const start = Date.now();
   const normalized = normalizeKeys(clause) as FindOneClause;
   const { columns, table } = model;
-  const { include, exclude, where } = normalized;
+
+  const {
+    where: whereRaw,
+    include: include_raw,
+    exclude: exclude_raw,
+    mode: mode_raw,
+  } = normalized as any;
+
+  /* ---- Resolve functions ---- */
+  const whereResolved =
+    typeof whereRaw === "function" ? await whereRaw() : whereRaw;
+  const where = whereResolved
+    ? await resolveObject(whereResolved)
+    : whereResolved;
+
+  const includeResolved =
+    typeof include_raw === "function" ? await include_raw() : include_raw;
+  const include = includeResolved
+    ? await resolveObject(includeResolved)
+    : includeResolved;
+
+  const excludeResolved =
+    typeof exclude_raw === "function" ? await exclude_raw() : exclude_raw;
+  const exclude = excludeResolved
+    ? await resolveObject(excludeResolved)
+    : excludeResolved;
+
+  const mode =
+    typeof mode_raw === "function" ? await resolveValue(mode_raw) : mode_raw;
 
   /* ---- Validate where uses only unique/primary columns ---- */
   if (where) {
@@ -876,6 +886,8 @@ export async function runFindOne(
         );
       }
     }
+
+    validateWhereClause(normalizeKeys(where), columns, table, "findOne");
   }
 
   const params: any[] = [];
@@ -889,6 +901,7 @@ export async function runFindOne(
       table,
       columns,
       table,
+      mode,
     );
     if (whereSQL !== "TRUE") sql += ` WHERE ${whereSQL}`;
   }
@@ -901,7 +914,9 @@ export async function runFindOne(
       console.log(
         `\x1b[36m  ⚡ findOne "${table}" — ${Date.now() - start}ms\x1b[0m`,
       );
-    return result.rows[0] ?? null;
+    const row = result.rows[0] ?? null;
+    if (!row) return null;
+    return parseDateColumns([row], columns)[0] ?? null;
   } catch (err: any) {
     throwQueryError(err, "findOne", table);
   }
