@@ -249,21 +249,41 @@ export function generateTypes(
     }
 
     lines.push(`  type ${typeName}RelationClause = {`);
-    lines.push(`    where?: any;`);
-    lines.push(`    orderBy?: any;`);
+    lines.push(
+      `    where?: import("./morm/query/index.js").WhereClause<${typeName}>;`,
+    );
+    lines.push(
+      `    orderBy?: import("./morm/query/index.js").OrderByClause<${typeName}>;`,
+    );
     lines.push(`    take?: number;`);
     lines.push(`    page?: number;`);
-    lines.push(`    after?: any;`);
-    lines.push(`    distinct?: any;`);
+    lines.push(
+      `    after?: { [K in keyof ${typeName}]?: string | number | null };`,
+    );
+    lines.push(
+      `    distinct?: import("./morm/query/index.js").DistinctClause<${typeName}>;`,
+    );
     lines.push(`    mode?: "sensitive" | "insensitive";`);
     lines.push(`    count?: boolean;`);
-    lines.push(`    sum?: string;`);
-    lines.push(`    avg?: string;`);
-    lines.push(`    min?: string;`);
-    lines.push(`    max?: string;`);
-    if (colKeys) lines.push(colKeys);
-    if (relKeys.length > 0) lines.push(relKeys.join("\n"));
+    lines.push(
+      `    sum?: import("./morm/query/index.js").NumberKeys<${typeName}>;`,
+    );
+    lines.push(
+      `    avg?: import("./morm/query/index.js").NumberKeys<${typeName}>;`,
+    );
+    lines.push(
+      `    min?: import("./morm/query/index.js").ComparableKeys<${typeName}>;`,
+    );
+    lines.push(
+      `    max?: import("./morm/query/index.js").ComparableKeys<${typeName}>;`,
+    );
+    lines.push(`    include?: ${typeName}IncludeClause;`);
+    lines.push(
+      `    exclude?: import("./morm/query/index.js").ExcludeClause<${typeName}>;`,
+    );
     lines.push(`  };`);
+    lines.push(``);
+
     lines.push(``);
 
     lines.push(`  type ${typeName}IncludeClause = {`);

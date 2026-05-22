@@ -83,7 +83,7 @@ const morm = async (db_url: string) => {
       ],
       indexes: ["name"],
     });
-    await morm?.migrate();
+    // await morm?.migrate();
     // await morm?.migrate({ reset: true });
 
     return morm;

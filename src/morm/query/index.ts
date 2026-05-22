@@ -7,12 +7,12 @@ export type MaybeFunction<T> = T | (() => T) | (() => Promise<T>);
 /* WHERE CONDITIONS                                       */
 /* ===================================================== */
 
-type NumberKeys<T> = {
+export type NumberKeys<T> = {
   [K in keyof T]: number extends NonNullable<T[K]> ? K : never;
 }[keyof T] &
   string;
 
-type ComparableKeys<T> = {
+export type ComparableKeys<T> = {
   [K in keyof T]: NonNullable<T[K]> extends boolean | any[]
     ? never
     : number extends NonNullable<T[K]>
