@@ -3,43 +3,62 @@ import type { Morm } from "../morm/morm.js";
 export const testFine = async (morm: Morm) => {
   try {
     await morm.transaction(async (trx) => {
-      const start = Date.now();
-
-      const result = await trx.user.find({
-        include: {
-          post: {
-            where: { title: { contains: "a" } },
-            orderBy: { title: "asc" },
-            take: 1,
-            include: {
-              id: true,
-              title: true,
-              user: {
-                include: {
-                  id: true,
-                  username: true,
-                  profile: {
-                    include: { fullname: true },
-                  },
-                  post: {
-                    count: true,
-                    where: { title: { contains: "a" } },
-                  },
-                },
-              },
-            },
-          },
-          profile: {
-            exclude: { avatar: true, user_id: true },
-          },
-        },
-        where: { is_active: true },
-        orderBy: { username: "asc" },
-        take: 3,
+      // F1 — basic findOne with profile
+      const f1 = await trx.user.findOne({
+        where: { id: "b79d6010-3efd-4662-b3ad-06259bdd1928" },
+        include: { profile: true },
       });
 
-      console.log(`Total time: ${Date.now() - start}ms`);
-      console.log(JSON.stringify(result, null, 2));
+      // F2 — findOne with post (ONE-TO-MANY)
+      const f2 = await trx.user.findOne({
+        where: { id: "b79d6010-3efd-4662-b3ad-06259bdd1928" },
+        include: { post: true },
+      });
+
+      // F3 — findOne with nested include + projection
+      const f3 = await trx.user.findOne({
+        where: { id: "b79d6010-3efd-4662-b3ad-06259bdd1928" },
+        include: {
+          profile: { include: { fullname: true } },
+          post: { take: 1, orderBy: { title: "asc" } },
+        },
+      });
+
+      // F4 — findOne returns null
+      const f4 = await trx.user.findOne({
+        where: { id: "00000000-0000-0000-0000-000000000000" },
+        include: { profile: true },
+      });
+
+      // F5 — findOne with exclude
+      const f5 = await trx.user.findOne({
+        where: { id: "b79d6010-3efd-4662-b3ad-06259bdd1928" },
+        exclude: { state: true, account_number: true },
+      });
+
+      // F6 — findOne with mode
+      const f6 = await trx.user.findOne({
+        where: { id: "b79d6010-3efd-4662-b3ad-06259bdd1928" },
+        include: {
+          post: {
+            where: { title: { contains: "typescript" } },
+            mode: "insensitive",
+          },
+        },
+      });
+
+      // F7 — TypeScript red line test — orderBy should show red line
+      // const f7 = await trx.user.findOne({
+      //   where: { id: "b79d6010-3efd-4662-b3ad-06259bdd1928" },
+      //   orderBy: { username: "asc" }, // ← should red line
+      // });
+
+      console.log("f1:", JSON.stringify(f1, null, 2));
+      console.log("f2:", JSON.stringify(f2, null, 2));
+      console.log("f3:", JSON.stringify(f3, null, 2));
+      console.log("f4:", JSON.stringify(f4, null, 2));
+      console.log("f5:", JSON.stringify(f5, null, 2));
+      console.log("f6:", JSON.stringify(f6, null, 2));
     });
   } catch (error) {
     console.error("Failed to connect to the database:", error);
